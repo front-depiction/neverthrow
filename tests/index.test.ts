@@ -15,7 +15,11 @@ import {
   ResultAsync,
 } from '../src'
 
-import { vitest, describe, expect, it } from 'vitest'
+import { vi, describe, expect, it, beforeEach } from 'vitest'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('Result.Ok', () => {
   it('Creates an Ok value', () => {
@@ -49,7 +53,7 @@ describe('Result.Ok', () => {
 
   it('Maps over an Ok value', () => {
     const okVal = ok(12)
-    const mapFn = vitest.fn((number) => number.toString())
+    const mapFn = vi.fn((number) => number.toString())
 
     const mapped = okVal.map(mapFn)
 
@@ -59,7 +63,7 @@ describe('Result.Ok', () => {
   })
 
   it('Skips `mapErr`', () => {
-    const mapErrorFunc = vitest.fn((_error) => 'mapped error value')
+    const mapErrorFunc = vi.fn((_error) => 'mapped error value')
 
     const notMapped = ok(12).mapErr(mapErrorFunc)
 
@@ -94,7 +98,7 @@ describe('Result.Ok', () => {
 
       expect(flattened.isOk()).toBe(false)
 
-      const nextFn = vitest.fn((_val) => ok('noop'))
+      const nextFn = vi.fn((_val) => ok('noop'))
 
       flattened.andThen(nextFn)
 
@@ -102,10 +106,99 @@ describe('Result.Ok', () => {
     })
   })
 
+  describe('andPush', () => {
+    const square = vi.fn((n: number) => ok(n * n))
+    const double = vi.fn((n: number) => ok(n * 2))
+    it('accumulates Ok values into a growing tuple', () => {
+      const result = ok(2)
+        .andPush(square)
+        .andPush(([, v]) => double(v))
+
+      // square should have been called once with 2
+      expect(square).toHaveBeenCalledTimes(1)
+      expect(square).toHaveBeenCalledWith(2)
+
+      // double should have been called once with 4
+      expect(double).toHaveBeenCalledTimes(1)
+      expect(double).toHaveBeenCalledWith(4)
+
+      // final shape is [2, 4, 8]
+      expect(result).toEqual(ok([2, 4, 8]))
+    })
+
+    it('short-circuits on the first Err and skips subsequent pushes', () => {
+      const fail = vi.fn((n: number) => err<never, string>('boom'))
+
+      const result = ok(2)
+        .andPush(fail)
+        .andPush(([, v]) => square(v)) // should never be called
+        .andPush(([, v]) => double(v)) // neither should this
+
+      expect(fail).toHaveBeenCalledTimes(1)
+      expect(square).not.toHaveBeenCalled()
+      expect(double).not.toHaveBeenCalled()
+      expect(result.isErr()).toBe(true)
+      expect(result._unsafeUnwrapErr()).toBe('boom')
+    })
+    describe('andThen vs andPush equivalence', () => {
+      it('andThen chain computes the same final result as extracting the last element of andPush', () => {
+        const viaPush = ok(2)
+          .andPush(square) // Ok<[2,4], E>
+          .andPush(([, v]) => double(v)) // Ok<[2,4,8], E>
+
+        const viaThen = ok(2)
+          .andThen(square) // Ok<4, E>
+          .andThen(double) // Ok<8, E>
+
+        expect(viaThen).toEqual(ok(8))
+        // _unsafeUnwrap() to pull out the last element of the tuple
+        expect(viaPush._unsafeUnwrap().slice(-1)[0]).toBe(8)
+      })
+    })
+  })
+
+  describe('andPop', () => {
+    const multiplyLast = vi.fn((n: number) => ok(n * 10))
+    const failLast = vi.fn((n: number) => err<string, string>('pop error'))
+
+    it('applies the function to the last element and returns its Ok', () => {
+      const result = ok([1, 2, 3]).andPop(multiplyLast)
+
+      expect(multiplyLast).toHaveBeenCalledTimes(1)
+      expect(multiplyLast).toHaveBeenCalledWith(3)
+      expect(result).toEqual(ok(30))
+    })
+
+    it('works correctly on single-element arrays', () => {
+      const result = ok([5]).andPop(multiplyLast)
+
+      expect(multiplyLast).toHaveBeenCalledTimes(1)
+      expect(multiplyLast).toHaveBeenCalledWith(5)
+      expect(result).toEqual(ok(50))
+    })
+
+    it('does not call the function when the original is Err', () => {
+      const original = err<number[], string>('orig error')
+      const result = original.andPop(multiplyLast)
+
+      expect(multiplyLast).not.toHaveBeenCalled()
+      expect(result).toEqual(err('orig error'))
+    })
+
+    it('short-circuits and returns the Err from the callback', () => {
+      const result = ok([1, 2, 3]).andPop(failLast)
+
+      expect(failLast).toHaveBeenCalledTimes(1)
+      expect(failLast).toHaveBeenCalledWith(3)
+      expect(result.isErr()).toBe(true)
+      expect(result._unsafeUnwrapErr()).toBe('pop error')
+    })
+  })
+
   describe('andThrough', () => {
     it('Calls the passed function but returns an original ok', () => {
       const okVal = ok(12)
-      const passedFn = vitest.fn((_number) => ok(undefined))
+      const passedFn = vi.fn((_number) => ok(undefined))
 
       const thrued = okVal.andThrough(passedFn)
       expect(thrued.isOk()).toBe(true)
@@ -126,7 +219,7 @@ describe('Result.Ok', () => {
       expect(thrued.isOk()).toBe(false)
       expect(thrued._unsafeUnwrapErr()).toStrictEqual('Whoopsies!')
 
-      const nextFn = vitest.fn((_val) => ok('noop'))
+      const nextFn = vi.fn((_val) => ok('noop'))
 
       thrued.andThen(nextFn)
 
@@ -137,7 +230,7 @@ describe('Result.Ok', () => {
   describe('andTee', () => {
     it('Calls the passed function but returns an original ok', () => {
       const okVal = ok(12)
-      const passedFn = vitest.fn((_number) => {})
+      const passedFn = vi.fn((_number) => {})
 
       const teed = okVal.andTee(passedFn)
 
@@ -147,7 +240,7 @@ describe('Result.Ok', () => {
     })
     it('returns an original ok even when the passed function fails', () => {
       const okVal = ok(12)
-      const passedFn = vitest.fn((_number) => {
+      const passedFn = vi.fn((_number) => {
         throw new Error('OMG!')
       })
 
@@ -162,7 +255,7 @@ describe('Result.Ok', () => {
   describe('orTee', () => {
     it('Calls the passed function but returns an original err', () => {
       const errVal = err(12)
-      const passedFn = vitest.fn((_number) => {})
+      const passedFn = vi.fn((_number) => {})
 
       const teed = errVal.orTee(passedFn)
 
@@ -172,7 +265,7 @@ describe('Result.Ok', () => {
     })
     it('returns an original err even when the passed function fails', () => {
       const errVal = err(12)
-      const passedFn = vitest.fn((_number) => {
+      const passedFn = vi.fn((_number) => {
         throw new Error('OMG!')
       })
 
@@ -187,7 +280,7 @@ describe('Result.Ok', () => {
   describe('asyncAndThrough', () => {
     it('Calls the passed function but returns an original ok as Async', async () => {
       const okVal = ok(12)
-      const passedFn = vitest.fn((_number) => okAsync(undefined))
+      const passedFn = vi.fn((_number) => okAsync(undefined))
 
       const teedAsync = okVal.asyncAndThrough(passedFn)
       expect(teedAsync).toBeInstanceOf(ResultAsync)
@@ -211,7 +304,7 @@ describe('Result.Ok', () => {
       expect(teed.isOk()).toBe(false)
       expect(teed._unsafeUnwrapErr()).toStrictEqual('Whoopsies!')
 
-      const nextFn = vitest.fn((_val) => ok('noop'))
+      const nextFn = vi.fn((_val) => ok('noop'))
 
       teed.andThen(nextFn)
 
@@ -221,7 +314,7 @@ describe('Result.Ok', () => {
   describe('orElse', () => {
     it('Skips orElse on an Ok value', () => {
       const okVal = ok(12)
-      const errorCallback = vitest.fn((_errVal) => err<number, string>('It is now a string'))
+      const errorCallback = vi.fn((_errVal) => err<number, string>('It is now a string'))
 
       expect(okVal.orElse(errorCallback)).toEqual(ok(12))
       expect(errorCallback).not.toHaveBeenCalled()
@@ -252,7 +345,7 @@ describe('Result.Ok', () => {
   })
 
   it('Maps to a promise', async () => {
-    const asyncMapper = vitest.fn((_val) => {
+    const asyncMapper = vi.fn((_val) => {
       // ...
       // complex logic
       // ..
@@ -278,8 +371,8 @@ describe('Result.Ok', () => {
   })
 
   it('Matches on an Ok', () => {
-    const okMapper = vitest.fn((_val) => 'weeeeee')
-    const errMapper = vitest.fn((_val) => 'wooooo')
+    const okMapper = vi.fn((_val) => 'weeeeee')
+    const errMapper = vi.fn((_val) => 'wooooo')
 
     const matched = ok(12).match(okMapper, errMapper)
 
@@ -323,7 +416,7 @@ describe('Result.Err', () => {
   it('Skips `map`', () => {
     const errVal = err('I am your father')
 
-    const mapper = vitest.fn((_value) => 'noooo')
+    const mapper = vi.fn((_value) => 'noooo')
 
     const hopefullyNotMapped = errVal.map(mapper)
 
@@ -335,7 +428,7 @@ describe('Result.Err', () => {
   it('Maps over an Err', () => {
     const errVal = err('Round 1, Fight!')
 
-    const mapper = vitest.fn((error: string) => error.replace('1', '2'))
+    const mapper = vi.fn((error: string) => error.replace('1', '2'))
 
     const mapped = errVal.mapErr(mapper)
 
@@ -352,7 +445,7 @@ describe('Result.Err', () => {
   it('Skips over andThen', () => {
     const errVal = err('Yolo')
 
-    const mapper = vitest.fn((_val) => ok<string, string>('yooyo'))
+    const mapper = vi.fn((_val) => ok<string, string>('yooyo'))
 
     const hopefullyNotFlattened = errVal.andThen(mapper)
 
@@ -364,7 +457,7 @@ describe('Result.Err', () => {
   it('Skips over andThrough', () => {
     const errVal = err('Yolo')
 
-    const mapper = vitest.fn((_val) => ok<void, string>(undefined))
+    const mapper = vi.fn((_val) => ok<void, string>(undefined))
 
     const hopefullyNotFlattened = errVal.andThrough(mapper)
 
@@ -376,7 +469,7 @@ describe('Result.Err', () => {
   it('Skips over andTee', () => {
     const errVal = err('Yolo')
 
-    const mapper = vitest.fn((_val) => {})
+    const mapper = vi.fn((_val) => {})
 
     const hopefullyNotFlattened = errVal.andTee(mapper)
 
@@ -388,7 +481,7 @@ describe('Result.Err', () => {
   it('Skips over asyncAndThrough but returns ResultAsync instead', async () => {
     const errVal = err('Yolo')
 
-    const mapper = vitest.fn((_val) => okAsync<string, unknown>('Async'))
+    const mapper = vi.fn((_val) => okAsync<string, unknown>('Async'))
 
     const hopefullyNotFlattened = errVal.asyncAndThrough(mapper)
     expect(hopefullyNotFlattened).toBeInstanceOf(ResultAsync)
@@ -402,7 +495,7 @@ describe('Result.Err', () => {
   it('Transforms error into ResultAsync within `asyncAndThen`', async () => {
     const errVal = err('Yolo')
 
-    const asyncMapper = vitest.fn((_val) => okAsync<string, string>('yooyo'))
+    const asyncMapper = vi.fn((_val) => okAsync<string, string>('yooyo'))
 
     const hopefullyNotFlattened = errVal.asyncAndThen(asyncMapper)
 
@@ -414,7 +507,7 @@ describe('Result.Err', () => {
   })
 
   it('Does not invoke callback within `asyncMap`', async () => {
-    const asyncMapper = vitest.fn((_val) => {
+    const asyncMapper = vi.fn((_val) => {
       // ...
       // complex logic
       // ..
@@ -440,8 +533,8 @@ describe('Result.Err', () => {
   })
 
   it('Matches on an Err', () => {
-    const okMapper = vitest.fn((_val) => 'weeeeee')
-    const errMapper = vitest.fn((_val) => 'wooooo')
+    const okMapper = vi.fn((_val) => 'weeeeee')
+    const errMapper = vi.fn((_val) => 'wooooo')
 
     const matched = err(12).match(okMapper, errMapper)
 
@@ -467,7 +560,7 @@ describe('Result.Err', () => {
   describe('orElse', () => {
     it('invokes the orElse callback on an Err value', () => {
       const okVal = err('BOOOM!')
-      const errorCallback = vitest.fn((_errVal) => err(true))
+      const errorCallback = vi.fn((_errVal) => err(true))
 
       expect(okVal.orElse(errorCallback)).toEqual(err(true))
       expect(errorCallback).toHaveBeenCalledTimes(1)
@@ -831,7 +924,7 @@ describe('ResultAsync', () => {
     it('Maps a value using a synchronous function', async () => {
       const asyncVal = okAsync(12)
 
-      const mapSyncFn = vitest.fn((number) => number.toString())
+      const mapSyncFn = vi.fn((number) => number.toString())
 
       const mapped = asyncVal.map(mapSyncFn)
 
@@ -847,7 +940,7 @@ describe('ResultAsync', () => {
     it('Maps a value using an asynchronous function', async () => {
       const asyncVal = okAsync(12)
 
-      const mapAsyncFn = vitest.fn((number) => Promise.resolve(number.toString()))
+      const mapAsyncFn = vi.fn((number) => Promise.resolve(number.toString()))
 
       const mapped = asyncVal.map(mapAsyncFn)
 
@@ -863,7 +956,7 @@ describe('ResultAsync', () => {
     it('Skips an error', async () => {
       const asyncErr = errAsync<number, string>('Wrong format')
 
-      const mapSyncFn = vitest.fn((number) => number.toString())
+      const mapSyncFn = vi.fn((number) => number.toString())
 
       const notMapped = asyncErr.map(mapSyncFn)
 
@@ -881,7 +974,7 @@ describe('ResultAsync', () => {
     it('Maps an error using a synchronous function', async () => {
       const asyncErr = errAsync('Wrong format')
 
-      const mapErrSyncFn = vitest.fn((str) => 'Error: ' + str)
+      const mapErrSyncFn = vi.fn((str) => 'Error: ' + str)
 
       const mappedErr = asyncErr.mapErr(mapErrSyncFn)
 
@@ -897,7 +990,7 @@ describe('ResultAsync', () => {
     it('Maps an error using an asynchronous function', async () => {
       const asyncErr = errAsync('Wrong format')
 
-      const mapErrAsyncFn = vitest.fn((str) => Promise.resolve('Error: ' + str))
+      const mapErrAsyncFn = vi.fn((str) => Promise.resolve('Error: ' + str))
 
       const mappedErr = asyncErr.mapErr(mapErrAsyncFn)
 
@@ -913,7 +1006,7 @@ describe('ResultAsync', () => {
     it('Skips a value', async () => {
       const asyncVal = okAsync(12)
 
-      const mapErrSyncFn = vitest.fn((str) => 'Error: ' + str)
+      const mapErrSyncFn = vi.fn((str) => 'Error: ' + str)
 
       const notMapped = asyncVal.mapErr(mapErrSyncFn)
 
@@ -931,7 +1024,7 @@ describe('ResultAsync', () => {
     it('Maps a value using a function returning a ResultAsync', async () => {
       const asyncVal = okAsync(12)
 
-      const andThenResultAsyncFn = vitest.fn(() => okAsync('good'))
+      const andThenResultAsyncFn = vi.fn(() => okAsync('good'))
 
       const mapped = asyncVal.andThen(andThenResultAsyncFn)
 
@@ -947,7 +1040,7 @@ describe('ResultAsync', () => {
     it('Maps a value using a function returning a Result', async () => {
       const asyncVal = okAsync(12)
 
-      const andThenResultFn = vitest.fn(() => ok('good'))
+      const andThenResultFn = vi.fn(() => ok('good'))
 
       const mapped = asyncVal.andThen(andThenResultFn)
 
@@ -963,7 +1056,7 @@ describe('ResultAsync', () => {
     it('Skips an Error', async () => {
       const asyncVal = errAsync<string, string>('Wrong format')
 
-      const andThenResultFn = vitest.fn(() => ok<string, string>('good'))
+      const andThenResultFn = vi.fn(() => ok<string, string>('good'))
 
       const notMapped = asyncVal.andThen(andThenResultFn)
 
@@ -986,7 +1079,7 @@ describe('ResultAsync', () => {
         DB persistence (create or update)
         API calls (create or update)
       */
-      const andThroughResultAsyncFn = vitest.fn(() => okAsync('good'))
+      const andThroughResultAsyncFn = vi.fn(() => okAsync('good'))
 
       const thrued = asyncVal.andThrough(andThroughResultAsyncFn)
 
@@ -1002,7 +1095,7 @@ describe('ResultAsync', () => {
     it('Maps to an error when map function returning ResultAsync fails', async () => {
       const asyncVal = okAsync(12)
 
-      const andThroughResultAsyncFn = vitest.fn(() => errAsync('oh no!'))
+      const andThroughResultAsyncFn = vi.fn(() => errAsync('oh no!'))
 
       const thrued = asyncVal.andThrough(andThroughResultAsyncFn)
 
@@ -1018,7 +1111,7 @@ describe('ResultAsync', () => {
     it('Returns the original value when map function returning Result succeeds', async () => {
       const asyncVal = okAsync(12)
 
-      const andThroughResultFn = vitest.fn(() => ok('good'))
+      const andThroughResultFn = vi.fn(() => ok('good'))
 
       const thrued = asyncVal.andThrough(andThroughResultFn)
 
@@ -1034,7 +1127,7 @@ describe('ResultAsync', () => {
     it('Maps to an error when map function returning Result fails', async () => {
       const asyncVal = okAsync(12)
 
-      const andThroughResultFn = vitest.fn(() => err('oh no!'))
+      const andThroughResultFn = vi.fn(() => err('oh no!'))
 
       const thrued = asyncVal.andThrough(andThroughResultFn)
 
@@ -1050,7 +1143,7 @@ describe('ResultAsync', () => {
     it('Skips an Error', async () => {
       const asyncVal = errAsync<string, string>('Wrong format')
 
-      const andThroughResultFn = vitest.fn(() => ok<string, string>('good'))
+      const andThroughResultFn = vi.fn(() => ok<string, string>('good'))
 
       const notMapped = asyncVal.andThrough(andThroughResultFn)
 
@@ -1067,7 +1160,7 @@ describe('ResultAsync', () => {
   describe('andTee', () => {
     it('Calls the passed function but returns an original ok', async () => {
       const okVal = okAsync(12)
-      const passedFn = vitest.fn((_number) => {})
+      const passedFn = vi.fn((_number) => {})
 
       const teed = await okVal.andTee(passedFn)
 
@@ -1077,7 +1170,7 @@ describe('ResultAsync', () => {
     })
     it('returns an original ok even when the passed function fails', async () => {
       const okVal = okAsync(12)
-      const passedFn = vitest.fn((_number) => {
+      const passedFn = vi.fn((_number) => {
         throw new Error('OMG!')
       })
 
@@ -1092,7 +1185,7 @@ describe('ResultAsync', () => {
   describe('orTee', () => {
     it('Calls the passed function but returns an original err', async () => {
       const errVal = errAsync(12)
-      const passedFn = vitest.fn((_number) => {})
+      const passedFn = vi.fn((_number) => {})
 
       const teed = await errVal.orTee(passedFn)
 
@@ -1102,7 +1195,7 @@ describe('ResultAsync', () => {
     })
     it('returns an original err even when the passed function fails', async () => {
       const errVal = errAsync(12)
-      const passedFn = vitest.fn((_number) => {
+      const passedFn = vi.fn((_number) => {
         throw new Error('OMG!')
       })
 
@@ -1117,7 +1210,7 @@ describe('ResultAsync', () => {
   describe('orElse', () => {
     it('Skips orElse on an Ok value', async () => {
       const okVal = okAsync(12)
-      const errorCallback = vitest.fn((_errVal) => errAsync<number, string>('It is now a string'))
+      const errorCallback = vi.fn((_errVal) => errAsync<number, string>('It is now a string'))
 
       const result = await okVal.orElse(errorCallback)
 
@@ -1128,7 +1221,7 @@ describe('ResultAsync', () => {
 
     it('Invokes the orElse callback on an Err value', async () => {
       const myResult = errAsync('BOOOM!')
-      const errorCallback = vitest.fn((_errVal) => errAsync(true))
+      const errorCallback = vi.fn((_errVal) => errAsync(true))
 
       const result = await myResult.orElse(errorCallback)
 
@@ -1138,7 +1231,7 @@ describe('ResultAsync', () => {
 
     it('Accepts a regular Result in the callback', async () => {
       const myResult = errAsync('BOOOM!')
-      const errorCallback = vitest.fn((_errVal) => err(true))
+      const errorCallback = vi.fn((_errVal) => err(true))
 
       const result = await myResult.orElse(errorCallback)
 
@@ -1149,8 +1242,8 @@ describe('ResultAsync', () => {
 
   describe('match', () => {
     it('Matches on an Ok', async () => {
-      const okMapper = vitest.fn((_val) => 'weeeeee')
-      const errMapper = vitest.fn((_val) => 'wooooo')
+      const okMapper = vi.fn((_val) => 'weeeeee')
+      const errMapper = vi.fn((_val) => 'wooooo')
 
       const matched = await okAsync(12).match(okMapper, errMapper)
 
@@ -1160,8 +1253,8 @@ describe('ResultAsync', () => {
     })
 
     it('Matches on an Error', async () => {
-      const okMapper = vitest.fn((_val) => 'weeeeee')
-      const errMapper = vitest.fn((_val) => 'wooooo')
+      const okMapper = vi.fn((_val) => 'weeeeee')
+      const errMapper = vi.fn((_val) => 'wooooo')
 
       const matched = await errAsync('bad').match(okMapper, errMapper)
 

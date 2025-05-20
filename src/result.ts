@@ -1,14 +1,7 @@
 import { errAsync, ResultAsync } from './'
 import { createNeverThrowError, ErrorConfig } from './_internals/error'
-import {
-  combineResultList,
-  combineResultListWithAllErrors,
-  ExtractErrTypes,
-  ExtractOkTypes,
-  InferAsyncErrTypes,
-  InferErrTypes,
-  InferOkTypes,
-} from './_internals/utils'
+import { combineResultList, combineResultListWithAllErrors } from './_internals/utils'
+import { ErrOf, ErrTuple, OkOf, OkTuple } from './_internals/types'
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Result {
@@ -34,28 +27,31 @@ export namespace Result {
     }
   }
 
-  export function combine<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]
-  >(resultList: T): CombineResults<T>
-  export function combine<T extends readonly Result<unknown, unknown>[]>(
-    resultList: T,
-  ): CombineResults<T>
-  export function combine<
-    T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]
-  >(resultList: T): CombineResults<T> {
-    return combineResultList(resultList) as CombineResults<T>
+  export function combine<const A extends readonly Result<unknown, unknown>[]>(
+    resultList: A,
+  ): CombineResults<A>
+
+  export function combine(
+    resultList: readonly Result<unknown, unknown>[],
+  ): Result<unknown, unknown> {
+    // your existing JS
+    return combineResultList(resultList)
   }
 
   export function combineWithAllErrors<
     T extends readonly [Result<unknown, unknown>, ...Result<unknown, unknown>[]]
-  >(resultList: T): CombineResultsWithAllErrorsArray<T>
-  export function combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T>
-  export function combineWithAllErrors<T extends readonly Result<unknown, unknown>[]>(
-    resultList: T,
-  ): CombineResultsWithAllErrorsArray<T> {
-    return combineResultListWithAllErrors(resultList) as CombineResultsWithAllErrorsArray<T>
+  >(resultList: [...T]): CombineResultsWithAllErrorsArray<T>
+
+  /* ② fallback – any Result[] variable (maybe empty, already widened) */
+  export function combineWithAllErrors<A extends readonly Result<unknown, unknown>[]>(
+    resultList: A,
+  ): CombineResultsWithAllErrorsArray<A>
+
+  /* single runtime implementation shared by both overloads */
+  export function combineWithAllErrors(
+    resultList: readonly Result<unknown, unknown>[],
+  ): Result<unknown, unknown> {
+    return combineResultListWithAllErrors(resultList)
   }
 }
 
@@ -91,10 +87,7 @@ export function safeTry<
   GeneratorReturnResult extends Result<unknown, unknown>
 >(
   body: () => Generator<YieldErr, GeneratorReturnResult>,
-): Result<
-  InferOkTypes<GeneratorReturnResult>,
-  InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult>
->
+): Result<OkOf<GeneratorReturnResult>, ErrOf<YieldErr> | ErrOf<GeneratorReturnResult>>
 
 /**
  * Evaluates the given generator to a Result returned or an Err yielded from it,
@@ -115,10 +108,7 @@ export function safeTry<
   GeneratorReturnResult extends Result<unknown, unknown>
 >(
   body: () => AsyncGenerator<YieldErr, GeneratorReturnResult>,
-): ResultAsync<
-  InferOkTypes<GeneratorReturnResult>,
-  InferErrTypes<YieldErr> | InferErrTypes<GeneratorReturnResult>
->
+): ResultAsync<OkOf<GeneratorReturnResult>, ErrOf<YieldErr> | ErrOf<GeneratorReturnResult>>
 export function safeTry<T, E>(
   body:
     | (() => Generator<Err<never, E>, Result<T, E>>)
@@ -131,7 +121,7 @@ export function safeTry<T, E>(
   return n.value
 }
 
-interface IResult<T, E> {
+export interface IResult<T, E> {
   /**
    * Used to check if a `Result` is an `OK`
    *
@@ -160,151 +150,96 @@ interface IResult<T, E> {
    * Maps a `Result<T, E>` to `Result<T, F>` by applying a function to a
    * contained `Err` value, leaving an `Ok` value untouched.
    *
-   * This function can be used to pass through a successful result while
-   * handling an error.
-   *
    * @param f a function to apply to the error `Err` value
    */
   mapErr<U>(f: (e: E) => U): Result<T, U>
 
   /**
-   * Similar to `map` Except you must return a new `Result`.
+   * Similar to `map` except you must return a new `Result`.
    *
-   * This is useful for when you need to do a subsequent computation using the
-   * inner `T` value, but that computation might fail.
-   * Additionally, `andThen` is really useful as a tool to flatten a
-   * `Result<Result<A, E2>, E1>` into a `Result<A, E2>` (see example below).
-   *
-   * @param f The function to apply to the current value
+   * Useful to flatten nested Results.
    */
-  andThen<R extends Result<unknown, unknown>>(
-    f: (t: T) => R,
-  ): Result<InferOkTypes<R>, InferErrTypes<R> | E>
+  andThen<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<OkOf<R>, ErrOf<R> | E>
   andThen<U, F>(f: (t: T) => Result<U, F>): Result<U, E | F>
 
   /**
-   * This "tee"s the current value to an passed-in computation such as side
-   * effect functions but still returns the same current value as the result.
+   * Like `andThen`, but pushes the new `Ok` value onto the end of the
+   * current value (array or scalar)
+   */
+  andPush<R extends Result<unknown, unknown>, U extends T extends readonly unknown[] ? T : [T]>(
+    f: (t: T) => R,
+  ): Result<[...U, OkOf<R>], ErrOf<R> | E>
+
+  /**
+   * Like `andThen`, but invoked on the *last* element of an array.
    *
-   * This is useful when you want to pass the current result to your side-track
-   * work such as logging but want to continue main-track work after that.
-   * This method does not care about the result of the passed in computation.
-   *
-   * @param f The function to apply to the current value
+   * If `T` is `readonly [...infer Rest, infer Last]`, `Last` is passed
+   * to `f`, and the returned `R` is spliced back in at the end of `Rest`.
+   * Otherwise it's a compile-time error.
+   */
+  andPop<R extends Result<unknown, unknown>, Arr extends unknown[]>(
+    this: Result<Arr, E>,
+    f: (t: T extends readonly [...infer _Rest, infer Last] ? Last : never) => R,
+  ): Result<OkOf<R>, ErrOf<R> | E>
+  andPop<U, F, Arr extends unknown[]>(
+    this: Result<Arr, E>,
+    f: (t: T extends readonly [...infer _Rest, infer Last] ? Last : never) => Result<U, F>,
+  ): Result<U, E | F>
+
+  /**
+   * This "tee"s the current value to a side-effect and returns the same value.
    */
   andTee(f: (t: T) => unknown): Result<T, E>
 
   /**
-   * This "tee"s the current `Err` value to an passed-in computation such as side
-   * effect functions but still returns the same `Err` value as the result.
-   *
-   * This is useful when you want to pass the current `Err` value to your side-track
-   * work such as logging but want to continue error-track work after that.
-   * This method does not care about the result of the passed in computation.
-   *
-   * @param f The function to apply to the current `Err` value
+   * This "tee"s the current `Err` to a side-effect and returns the same `Err`.
    */
-  orTee(f: (t: E) => unknown): Result<T, E>
+  orTee(f: (e: E) => unknown): Result<T, E>
 
   /**
-   * Similar to `andTee` except error result of the computation will be passed
-   * to the downstream in case of an error.
-   *
-   * This version is useful when you want to make side-effects but in case of an
-   * error, you want to pass the error to the downstream.
-   *
-   * @param f The function to apply to the current value
+   * Like `andTee`, but if `f` fails it returns the new error downstream.
    */
-  andThrough<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<T, InferErrTypes<R> | E>
+  andThrough<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<T, ErrOf<R> | E>
   andThrough<F>(f: (t: T) => Result<unknown, F>): Result<T, E | F>
 
   /**
-   * Takes an `Err` value and maps it to a `Result<T, SomeNewType>`.
-   *
-   * This is useful for error recovery.
-   *
-   *
-   * @param f  A function to apply to an `Err` value, leaving `Ok` values
-   * untouched.
+   * Takes an `Err` and maps it to a `Result<T, NewErr>`, useful for recovery.
    */
-  orElse<R extends Result<unknown, unknown>>(
-    f: (e: E) => R,
-  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  orElse<R extends Result<unknown, unknown>>(f: (e: E) => R): Result<OkOf<R> | T, ErrOf<R>>
   orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
 
   /**
-   * Similar to `map` Except you must return a new `Result`.
-   *
-   * This is useful for when you need to do a subsequent async computation using
-   * the inner `T` value, but that computation might fail. Must return a ResultAsync
-   *
-   * @param f The function that returns a `ResultAsync` to apply to the current
-   * value
+   * Like `andThen` but for async functions returning `ResultAsync`.
    */
   asyncAndThen<U, F>(f: (t: T) => ResultAsync<U, F>): ResultAsync<U, E | F>
 
   /**
-   * Maps a `Result<T, E>` to `ResultAsync<U, E>`
-   * by applying an async function to a contained `Ok` value, leaving an `Err`
-   * value untouched.
-   *
-   * @param f An async function to apply an `OK` value
+   * Maps an async function over `Ok`, leaving `Err` untouched.
    */
   asyncMap<U>(f: (t: T) => Promise<U>): ResultAsync<U, E>
 
   /**
-   * Unwrap the `Ok` value, or return the default if there is an `Err`
-   *
-   * @param v the default value to return if there is an `Err`
+   * Unwrap the `Ok` or return the default if `Err`.
    */
   unwrapOr<A>(v: A): T | A
 
   /**
-   *
-   * Given 2 functions (one for the `Ok` variant and one for the `Err` variant)
-   * execute the function that matches the `Result` variant.
-   *
-   * Match callbacks do not necessitate to return a `Result`, however you can
-   * return a `Result` if you want to.
-   *
-   * `match` is like chaining `map` and `mapErr`, with the distinction that
-   * with `match` both functions must have the same return type.
-   *
-   * @param ok
-   * @param err
+   * Pattern-match on both `Ok` and `Err`, returning the result of the chosen callback.
    */
   match<A, B = A>(ok: (t: T) => A, err: (e: E) => B): A | B
 
   /**
-   * @deprecated will be removed in 9.0.0.
-   *
-   * You can use `safeTry` without this method.
-   * @example
-   * ```typescript
-   * safeTry(function* () {
-   *   const okValue = yield* yourResult
-   * })
-   * ```
-   * Emulates Rust's `?` operator in `safeTry`'s body. See also `safeTry`.
+   * @deprecated Emulates Rust’s `?` in `safeTry`; will be removed in 9.0.0.
    */
   safeUnwrap(): Generator<Err<never, E>, T>
 
   /**
-   * **This method is unsafe, and should only be used in a test environments**
-   *
-   * Takes a `Result<T, E>` and returns a `T` when the result is an `Ok`, otherwise it throws a custom object.
-   *
-   * @param config
+   * Unsafe: unwrap `Ok`, throw on `Err`.
    */
   _unsafeUnwrap(config?: ErrorConfig): T
 
   /**
-   * **This method is unsafe, and should only be used in a test environments**
-   *
-   * takes a `Result<T, E>` and returns a `E` when the result is an `Err`,
-   * otherwise it throws a custom object.
-   *
-   * @param config
+   * Unsafe: unwrap `Err`, throw on `Ok`.
    */
   _unsafeUnwrapErr(config?: ErrorConfig): E
 }
@@ -325,24 +260,59 @@ export class Ok<T, E> implements IResult<T, E> {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  mapErr<U>(_f: (e: E) => U): Result<T, U> {
+  mapErr(_f: (e: E) => unknown): Result<T, never> {
     return ok(this.value)
   }
 
-  andThen<R extends Result<unknown, unknown>>(
-    f: (t: T) => R,
-  ): Result<InferOkTypes<R>, InferErrTypes<R> | E>
+  andThen<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<OkOf<R>, ErrOf<R> | E>
   andThen<U, F>(f: (t: T) => Result<U, F>): Result<U, E | F>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   andThen(f: any): any {
     return f(this.value)
   }
 
-  andThrough<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<T, InferErrTypes<R> | E>
-  andThrough<F>(f: (t: T) => Result<unknown, F>): Result<T, E | F>
+  /**
+   * Like `andThen`, but splices the new `Ok` value onto the end of the current
+   * value (either pushing onto an array or wrapping a scalar).
+   */
+  andPush<R extends Result<unknown, unknown>, U extends T extends readonly unknown[] ? T : [T]>(
+    f: (t: T) => R,
+  ): Result<[...U, OkOf<R>], ErrOf<R> | E> {
+    const result = f(this.value) as Result<OkOf<R>, ErrOf<R>>
+    return result.map((v) =>
+      // at runtime, build the same shape:
+      [...(Array.isArray(this.value) ? (this.value as U) : ([this.value] as U)), v],
+    )
+  }
+
+  /**
+   * Run `f` on the last element of the array.
+   * – If `f` returns `R extends Result<…>` → we return `Result<OkOf<R>, ErrOf<R>>`
+   * – If `f` returns `Result<U, F>`        → we return `Result<U, F>`
+   *
+   * Compile-time: only callable when `T` is an array type.
+   */
+  andPop<R extends Result<unknown, unknown>, Arr extends unknown[]>(
+    this: Result<Arr, E>,
+    f: (t: T extends readonly [...infer _Rest, infer Last] ? Last : never) => R,
+  ): Result<OkOf<R>, ErrOf<R> | E>
+  andPop<U, F, Arr extends unknown[]>(
+    this: Result<Arr, E>,
+    f: (t: T extends readonly [...infer _Rest, infer Last] ? Last : never) => Result<U, F>,
+  ): Result<U, E | F>
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  andThrough(f: any): any {
-    return f(this.value).map((_value: unknown) => this.value)
+  andPop(f: any): any {
+    const arr = this.value as readonly unknown[]
+    const last = arr[arr.length - 1]
+    return f(last)
+  }
+
+  // public overloads:
+  andThrough<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<T, ErrOf<R>>
+  andThrough<F>(f: (t: T) => Result<unknown, F>): Result<T, F>
+  andThrough(f: (t: T) => Result<unknown, unknown>): Result<T, unknown> {
+    return f(this.value).map(() => this.value)
   }
 
   andTee(f: (t: T) => unknown): Result<T, E> {
@@ -355,28 +325,21 @@ export class Ok<T, E> implements IResult<T, E> {
   }
 
   orTee(_f: (t: E) => unknown): Result<T, E> {
-    return ok<T, E>(this.value)
+    return this
   }
 
-  orElse<R extends Result<unknown, unknown>>(
-    _f: (e: E) => R,
-  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  orElse<R extends Result<unknown, unknown>>(_f: (e: E) => R): Result<OkOf<R> | T, ErrOf<R>>
   orElse<U, A>(_f: (e: E) => Result<U, A>): Result<U | T, A>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   orElse(_f: any): any {
-    return ok(this.value)
+    return this
   }
 
   asyncAndThen<U, F>(f: (t: T) => ResultAsync<U, F>): ResultAsync<U, E | F> {
     return f(this.value)
   }
 
-  asyncAndThrough<R extends ResultAsync<unknown, unknown>>(
-    f: (t: T) => R,
-  ): ResultAsync<T, InferAsyncErrTypes<R> | E>
-  asyncAndThrough<F>(f: (t: T) => ResultAsync<unknown, F>): ResultAsync<T, E | F>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  asyncAndThrough(f: (t: T) => ResultAsync<unknown, unknown>): any {
+  asyncAndThrough<E, R extends ResultAsync<unknown, E>>(f: (t: T) => R): ResultAsync<T, E> {
     return f(this.value).map(() => this.value)
   }
 
@@ -390,8 +353,8 @@ export class Ok<T, E> implements IResult<T, E> {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  match<A, B = A>(ok: (t: T) => A, _err: (e: E) => B): A | B {
-    return ok(this.value)
+  match<A, B = A>(f: (t: T) => A, _err: (e: E) => B): A | B {
+    return f(this.value)
   }
 
   safeUnwrap(): Generator<Err<never, E>, T> {
@@ -437,11 +400,11 @@ export class Err<T, E> implements IResult<T, E> {
   }
 
   andThrough<F>(_f: (t: T) => Result<unknown, F>): Result<T, E | F> {
-    return err(this.error)
+    return this
   }
 
   andTee(_f: (t: T) => unknown): Result<T, E> {
-    return err(this.error)
+    return this
   }
 
   orTee(f: (t: E) => unknown): Result<T, E> {
@@ -453,18 +416,34 @@ export class Err<T, E> implements IResult<T, E> {
     return err<T, E>(this.error)
   }
 
-  andThen<R extends Result<unknown, unknown>>(
-    _f: (t: T) => R,
-  ): Result<InferOkTypes<R>, InferErrTypes<R> | E>
-  andThen<U, F>(_f: (t: T) => Result<U, F>): Result<U, E | F>
+  andThen<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<OkOf<R>, ErrOf<R> | E>
+  andThen<U, F>(f: (t: T) => Result<U, F>): Result<U, E | F>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   andThen(_f: any): any {
+    return this
+  }
+
+  andPush<R extends Result<unknown, unknown>, U extends T extends readonly unknown[] ? T : [T]>(
+    _f: (t: T) => R,
+  ): Result<[...U, OkOf<R>], ErrOf<R> | E> {
     return err(this.error)
   }
 
-  orElse<R extends Result<unknown, unknown>>(
-    f: (e: E) => R,
-  ): Result<InferOkTypes<R> | T, InferErrTypes<R>>
+  andPop<R extends Result<unknown, unknown>, Arr extends unknown[]>(
+    this: Result<Arr, E>,
+    f: (t: T extends readonly [...infer _Rest, infer Last] ? Last : never) => R,
+  ): Result<OkOf<R>, ErrOf<R> | E>
+  andPop<U, F, Arr extends unknown[]>(
+    this: Result<Arr, E>,
+    f: (t: T extends readonly [...infer _Rest, infer Last] ? Last : never) => Result<U, F>,
+  ): Result<U, E | F>
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
+  andPop(_f: any): any {
+    return err(this.error)
+  }
+
+  orElse<R extends Result<unknown, unknown>>(f: (e: E) => R): Result<OkOf<R> | T, ErrOf<R>>
   orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   orElse(f: any): any {
@@ -489,8 +468,8 @@ export class Err<T, E> implements IResult<T, E> {
     return v
   }
 
-  match<A, B = A>(_ok: (t: T) => A, err: (e: E) => B): A | B {
-    return err(this.error)
+  match<A, B = A>(_ok: (t: T) => A, f: (e: E) => B): A | B {
+    return f(this.error)
   }
 
   safeUnwrap(): Generator<Err<never, E>, T> {
@@ -521,205 +500,32 @@ export class Err<T, E> implements IResult<T, E> {
 }
 
 export const fromThrowable = Result.fromThrowable
+/** First-error-wins combine (handles the empty list case) */
+export type CombineResults<T extends readonly Result<unknown, unknown>[]> = T extends []
+  ? Result<never, never> //     ⟶ Ok<never, never>
+  : Result<OkTuple<T>, ErrTuple<T>[number]>
 
-//#region Combine - Types
-
-// This is a helper type to prevent infinite recursion in typing rules.
-//
-// Use this with your `depth` variable in your types.
-type Prev = [
-  never,
-  0,
-  1,
-  2,
-  3,
-  4,
-  5,
-  6,
-  7,
-  8,
-  9,
-  10,
-  11,
-  12,
-  13,
-  14,
-  15,
-  16,
-  17,
-  18,
-  19,
-  20,
-  21,
-  22,
-  23,
-  24,
-  25,
-  26,
-  27,
-  28,
-  29,
-  30,
-  31,
-  32,
-  33,
-  34,
-  35,
-  36,
-  37,
-  38,
-  39,
-  40,
-  41,
-  42,
-  43,
-  44,
-  45,
-  46,
-  47,
-  48,
-  49,
-  ...0[]
-]
-
-// Collects the results array into separate tuple array.
-//
-// T         - The array of the results
-// Collected - The collected tuples.
-// Depth     - The maximum depth.
-type CollectResults<T, Collected extends unknown[] = [], Depth extends number = 50> = [
-  Depth,
-] extends [never]
-  ? []
-  : T extends [infer H, ...infer Rest]
-  ? // And test whether the head of the list is a result
-    H extends Result<infer L, infer R>
-    ? // Continue collecting...
-      CollectResults<
-        // the rest of the elements
-        Rest,
-        // The collected
-        [...Collected, [L, R]],
-        // and one less of the current depth
-        Prev[Depth]
-      >
-    : never // Impossible
-  : Collected
-
-// Transposes an array
-//
-// A          - The array source
-// Transposed - The collected transposed array
-// Depth      - The maximum depth.
-export type Transpose<
-  A,
-  Transposed extends unknown[][] = [],
-  Depth extends number = 10
-> = A extends [infer T, ...infer Rest]
-  ? T extends [infer L, infer R]
-    ? Transposed extends [infer PL, infer PR]
-      ? PL extends unknown[]
-        ? PR extends unknown[]
-          ? Transpose<Rest, [[...PL, L], [...PR, R]], Prev[Depth]>
-          : never
-        : never
-      : Transpose<Rest, [[L], [R]], Prev[Depth]>
-    : Transposed
-  : Transposed
-
-// Combines the both sides of the array of the results into a tuple of the
-// union of the ok types and the union of the err types.
-//
-// T     - The array of the results
-// Depth - The maximum depth.
-export type Combine<T, Depth extends number = 5> = Transpose<CollectResults<T>, [], Depth> extends [
-  infer L,
-  infer R,
-]
-  ? [UnknownMembersToNever<L>, UnknownMembersToNever<R>]
-  : Transpose<CollectResults<T>, [], Depth> extends []
-  ? [[], []]
-  : never
-
-// Deduplicates the result, as the result type is a union of Err and Ok types.
-export type Dedup<T> = T extends Result<infer RL, infer RR>
-  ? [unknown] extends [RL]
-    ? Err<RL, RR>
-    : Ok<RL, RR>
-  : T
-
-// Given a union, this gives the array of the union members.
-export type MemberListOf<T> = (
-  (T extends unknown ? (t: T) => T : never) extends infer U
-    ? (U extends unknown ? (u: U) => unknown : never) extends (v: infer V) => unknown
-      ? V
-      : never
-    : never
-) extends (_: unknown) => infer W
-  ? [...MemberListOf<Exclude<T, W>>, W]
-  : []
-
-// Converts an empty array to never.
-//
-// The second type parameter here will affect how to behave to `never[]`s.
-// If a precise type is required, pass `1` here so that it will resolve
-// a literal array such as `[ never, never ]`. Otherwise, set `0` or the default
-// type value will cause this to resolve the arrays containing only `never`
-// items as `never` only.
-export type EmptyArrayToNever<T, NeverArrayToNever extends number = 0> = T extends []
-  ? never
-  : NeverArrayToNever extends 1
-  ? T extends [never, ...infer Rest]
-    ? [EmptyArrayToNever<Rest>] extends [never]
-      ? never
-      : T
-    : T
-  : T
-
-// Converts the `unknown` items of an array to `never`s.
-type UnknownMembersToNever<T> = T extends [infer H, ...infer R]
-  ? [[unknown] extends [H] ? never : H, ...UnknownMembersToNever<R>]
-  : T
-
-// Gets the member type of the array or never.
-export type MembersToUnion<T> = T extends unknown[] ? T[number] : never
-
-// Checks if the given type is a literal array.
-export type IsLiteralArray<T> = T extends { length: infer L }
-  ? L extends number
-    ? number extends L
-      ? 0
-      : 1
-    : 0
-  : 0
-
-// Traverses an array of results and returns a single result containing
-// the oks and errs union-ed/combined.
-type Traverse<T, Depth extends number = 5> = Combine<T, Depth> extends [infer Oks, infer Errs]
-  ? Result<EmptyArrayToNever<Oks, 1>, MembersToUnion<Errs>>
-  : never
-
-// Traverses an array of results and returns a single result containing
-// the oks combined and the array of errors combined.
-type TraverseWithAllErrors<T, Depth extends number = 5> = Traverse<T, Depth> extends Result<
-  infer Oks,
-  infer Errs
->
-  ? Result<Oks, Errs[]>
-  : never
-
-// Combines the array of results into one result.
-export type CombineResults<
-  T extends readonly Result<unknown, unknown>[]
-> = IsLiteralArray<T> extends 1
-  ? Traverse<T>
-  : Result<ExtractOkTypes<T>, ExtractErrTypes<T>[number]>
-
-// Combines the array of results into one result with all errors.
+/** Collect-all-errors combine (handles the empty list case) */
 export type CombineResultsWithAllErrorsArray<
   T extends readonly Result<unknown, unknown>[]
-> = IsLiteralArray<T> extends 1
-  ? TraverseWithAllErrors<T>
-  : Result<ExtractOkTypes<T>, ExtractErrTypes<T>[number][]>
-
+> = T extends [] ? Result<never, never> : Result<OkTuple<T>, ErrTuple<T>[number][]>
 //#endregion
+
+const double: (number: number) => Result<number, Error> = Result.fromThrowable(
+  (number: number) => {
+    return 2 * number
+  },
+  (error) => (error instanceof Error ? error : new Error(String(error))),
+)
+
+const square: (number: number) => Result<number, Error> = Result.fromThrowable(
+  (number: number) => {
+    return number * number
+  },
+  (error) => (error instanceof Error ? error : new Error(String(error))),
+)
+
+const some = ok(2)
+  .andPush(square)
+  .andPush(([, v]) => double(v))
+const someOther = ok(2).andPop(square).andThen(double)
