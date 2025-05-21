@@ -316,7 +316,10 @@ describe('Result.Ok', () => {
       const okVal = ok(12)
       const errorCallback = vi.fn((_errVal) => err<number, string>('It is now a string'))
 
-      expect(okVal.orElse(errorCallback)).toEqual(ok(12))
+      const result = okVal.orElse(errorCallback)
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toBe(12)
       expect(errorCallback).not.toHaveBeenCalled()
     })
   })
@@ -1214,7 +1217,12 @@ describe('ResultAsync', () => {
 
       const result = await okVal.orElse(errorCallback)
 
-      expect(result).toEqual(ok(12))
+      // 1. It's still an Ok
+      expect(result.isOk()).toBe(true)
+
+      // 2. And the contained value is 12
+      //    _unsafeUnwrap is safe here because we've already asserted isOk()
+      expect(result._unsafeUnwrap()).toBe(12)
 
       expect(errorCallback).not.toHaveBeenCalled()
     })

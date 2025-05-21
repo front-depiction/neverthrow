@@ -1,4 +1,4 @@
-import { errAsync, ResultAsync } from './'
+import { errAsync, ResultAsync } from './result-async'
 import { createNeverThrowError, ErrorConfig } from './_internals/error'
 import { combineResultList, combineResultListWithAllErrors } from './_internals/utils'
 import { ErrOf, ErrTuple, OkOf, OkTuple } from './_internals/types'
@@ -57,17 +57,17 @@ export namespace Result {
 
 export type Result<T, E> = Ok<T, E> | Err<T, E>
 
-export function ok<T, E = never>(value: T): Ok<T, E>
-export function ok<T extends void = void, E = never>(value: void): Ok<void, E>
-export function ok<T, E = never>(value: T): Ok<T, E> {
-  return new Ok(value)
+export function ok<T, E = never>(value: T, breadcrumbs?: string[]): Ok<T, E>
+export function ok<T extends void = void, E = never>(value: void, breadcrumbs?: string[]): Ok<void, E>
+export function ok<T, E = never>(value: T, breadcrumbs?: string[]): Ok<T, E> {
+  return new Ok(value, breadcrumbs)
 }
 
-export function err<T = never, E extends string = string>(err: E): Err<T, E>
-export function err<T = never, E = unknown>(err: E): Err<T, E>
-export function err<T = never, E extends void = void>(err: void): Err<T, void>
-export function err<T = never, E = unknown>(err: E): Err<T, E> {
-  return new Err(err)
+export function err<T = never, E extends string = string>(err: E, breadcrumbs?: string[]): Err<T, E>
+export function err<T = never, E = unknown>(err: E, breadcrumbs?: string[]): Err<T, E>
+export function err<T = never, E extends void = void>(err: void, breadcrumbs?: string[]): Err<T, void>
+export function err<T = never, E = unknown>(err: E, breadcrumbs?: string[]): Err<T, E> {
+  return new Err(err, breadcrumbs)
 }
 
 /**
@@ -244,8 +244,14 @@ export interface IResult<T, E> {
   _unsafeUnwrapErr(config?: ErrorConfig): E
 }
 
+// either get the name, or a snippet of the source code if the function is anonymous
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function generateBreadcrumb(f: (...args: any[]) => any): string {
+  return f.name.trim() || f.toString().slice(0, 15).trim() + '...'
+}
+
 export class Ok<T, E> implements IResult<T, E> {
-  constructor(readonly value: T) {}
+  constructor(readonly value: T, readonly breadcrumbs: string[] = []) {}
 
   isOk(): this is Ok<T, E> {
     return true
@@ -256,19 +262,23 @@ export class Ok<T, E> implements IResult<T, E> {
   }
 
   map<A>(f: (t: T) => A): Result<A, E> {
-    return ok(f(this.value))
+    this.breadcrumbs.push('map: ' + generateBreadcrumb(f))
+    return ok(f(this.value), this.breadcrumbs)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  mapErr(_f: (e: E) => unknown): Result<T, never> {
-    return ok(this.value)
+  mapErr(_f: (e: E, breadcrumbs: string[]) => unknown): Result<T, never> {
+    this.breadcrumbs.push('mapErr: ' + generateBreadcrumb(_f))
+    return ok(this.value, this.breadcrumbs)
   }
 
   andThen<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<OkOf<R>, ErrOf<R> | E>
   andThen<U, F>(f: (t: T) => Result<U, F>): Result<U, E | F>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  andThen(f: any): any {
-    return f(this.value)
+  andThen(f: (t: T) => Result<unknown, unknown>): Result<unknown, unknown> {
+    const result = f(this.value)
+    result.breadcrumbs.push(...this.breadcrumbs, 'andThen: ' + generateBreadcrumb(f))
+    return result
   }
 
   /**
@@ -279,6 +289,7 @@ export class Ok<T, E> implements IResult<T, E> {
     f: (t: T) => R,
   ): Result<[...U, OkOf<R>], ErrOf<R> | E> {
     const result = f(this.value) as Result<OkOf<R>, ErrOf<R>>
+    result.breadcrumbs.push(...this.breadcrumbs, 'andPush: ' + generateBreadcrumb(f))
     return result.map((v) =>
       // at runtime, build the same shape:
       [...(Array.isArray(this.value) ? (this.value as U) : ([this.value] as U)), v],
@@ -303,6 +314,7 @@ export class Ok<T, E> implements IResult<T, E> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   andPop(f: any): any {
+    this.breadcrumbs.push('andPop: ' + generateBreadcrumb(f))
     const arr = this.value as readonly unknown[]
     const last = arr[arr.length - 1]
     return f(last)
@@ -312,52 +324,62 @@ export class Ok<T, E> implements IResult<T, E> {
   andThrough<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<T, ErrOf<R>>
   andThrough<F>(f: (t: T) => Result<unknown, F>): Result<T, F>
   andThrough(f: (t: T) => Result<unknown, unknown>): Result<T, unknown> {
+    this.breadcrumbs.push('andThrough: ' + generateBreadcrumb(f))
     return f(this.value).map(() => this.value)
   }
 
   andTee(f: (t: T) => unknown): Result<T, E> {
+    this.breadcrumbs.push('andTee: ' + generateBreadcrumb(f))
     try {
       f(this.value)
     } catch (e) {
       // Tee doesn't care about the error
     }
-    return ok<T, E>(this.value)
+    return ok<T, E>(this.value, this.breadcrumbs)
   }
 
-  orTee(_f: (t: E) => unknown): Result<T, E> {
+  orTee(_f: (t: E, breadcrumbs: string[]) => unknown): Result<T, E> {
+    this.breadcrumbs.push('orTee: ' + generateBreadcrumb(_f))
     return this
   }
 
-  orElse<R extends Result<unknown, unknown>>(_f: (e: E) => R): Result<OkOf<R> | T, ErrOf<R>>
+  orElse<R extends Result<unknown, unknown>>(_f: (e: E, breadcrumbs: string[]) => R): Result<OkOf<R> | T, ErrOf<R>>
   orElse<U, A>(_f: (e: E) => Result<U, A>): Result<U | T, A>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  orElse(_f: any): any {
+  orElse(f: any): any {
+    this.breadcrumbs.push('orElse: ' + generateBreadcrumb(f))
     return this
   }
 
   asyncAndThen<U, F>(f: (t: T) => ResultAsync<U, F>): ResultAsync<U, E | F> {
+    this.breadcrumbs.push('asyncAndThen: ' + generateBreadcrumb(f))
     return f(this.value)
   }
 
   asyncAndThrough<E, R extends ResultAsync<unknown, E>>(f: (t: T) => R): ResultAsync<T, E> {
+    this.breadcrumbs.push('asyncAndThrough: ' + generateBreadcrumb(f))
     return f(this.value).map(() => this.value)
   }
 
   asyncMap<U>(f: (t: T) => Promise<U>): ResultAsync<U, E> {
+    this.breadcrumbs.push('asyncMap: ' + generateBreadcrumb(f))
     return ResultAsync.fromSafePromise(f(this.value))
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   unwrapOr<A>(_v: A): T | A {
+    this.breadcrumbs.push('unwrapOr')
     return this.value
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  match<A, B = A>(f: (t: T) => A, _err: (e: E) => B): A | B {
+  match<A, B = A>(f: (t: T) => A, _err: (e: E, breadcrumbs: string[]) => B): A | B {
+    this.breadcrumbs.push('match: ' + generateBreadcrumb(f))
     return f(this.value)
   }
 
   safeUnwrap(): Generator<Err<never, E>, T> {
+    this.breadcrumbs.push('safeUnwrap')
     const value = this.value
     /* eslint-disable-next-line require-yield */
     return (function* () {
@@ -366,21 +388,24 @@ export class Ok<T, E> implements IResult<T, E> {
   }
 
   _unsafeUnwrap(_?: ErrorConfig): T {
+    this.breadcrumbs.push('_unsafeUnwrap')
     return this.value
   }
 
   _unsafeUnwrapErr(config?: ErrorConfig): E {
+    this.breadcrumbs.push('_unsafeUnwrapErr')
     throw createNeverThrowError('Called `_unsafeUnwrapErr` on an Ok', this, config)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-this-alias, require-yield
   *[Symbol.iterator](): Generator<Err<never, E>, T> {
+    this.breadcrumbs.push('Symbol.iterator')
     return this.value
   }
 }
 
 export class Err<T, E> implements IResult<T, E> {
-  constructor(readonly error: E) {}
+  constructor(readonly error: E, readonly breadcrumbs: string[] = []) {}
 
   isOk(): this is Ok<T, E> {
     return false
@@ -392,41 +417,48 @@ export class Err<T, E> implements IResult<T, E> {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   map<A>(_f: (t: T) => A): Result<A, E> {
-    return err(this.error)
+    this.breadcrumbs.push('map')
+    return err(this.error, this.breadcrumbs)
   }
 
-  mapErr<U>(f: (e: E) => U): Result<T, U> {
-    return err(f(this.error))
+  mapErr<U>(f: (e: E, breadcrumbs: string[]) => U): Result<T, U> {
+    this.breadcrumbs.push('mapErr: ' + generateBreadcrumb(f))
+    return err(f(this.error, this.breadcrumbs), this.breadcrumbs)
   }
 
   andThrough<F>(_f: (t: T) => Result<unknown, F>): Result<T, E | F> {
+    this.breadcrumbs.push('andThrough: ' + generateBreadcrumb(_f))
     return this
   }
 
   andTee(_f: (t: T) => unknown): Result<T, E> {
+    this.breadcrumbs.push('andTee: ' + generateBreadcrumb(_f))
     return this
   }
 
-  orTee(f: (t: E) => unknown): Result<T, E> {
+  orTee(f: (t: E, breadcrumbs: string[]) => unknown): Result<T, E> {
+    this.breadcrumbs.push('orTee: ' + generateBreadcrumb(f))
     try {
-      f(this.error)
+      f(this.error, this.breadcrumbs)
     } catch (e) {
       // Tee doesn't care about the error
     }
-    return err<T, E>(this.error)
+    return err<T, E>(this.error, this.breadcrumbs)
   }
 
   andThen<R extends Result<unknown, unknown>>(f: (t: T) => R): Result<OkOf<R>, ErrOf<R> | E>
   andThen<U, F>(f: (t: T) => Result<U, F>): Result<U, E | F>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  andThen(_f: any): any {
+  andThen(f: any): any {
+    this.breadcrumbs.push('andThen: ' + generateBreadcrumb(f))
     return this
   }
 
   andPush<R extends Result<unknown, unknown>, U extends T extends readonly unknown[] ? T : [T]>(
-    _f: (t: T) => R,
+    f: (t: T) => R,
   ): Result<[...U, OkOf<R>], ErrOf<R> | E> {
-    return err(this.error)
+    this.breadcrumbs.push('andPush: ' + generateBreadcrumb(f))
+    return err(this.error, this.breadcrumbs)
   }
 
   andPop<R extends Result<unknown, unknown>, Arr extends unknown[]>(
@@ -439,43 +471,50 @@ export class Err<T, E> implements IResult<T, E> {
   ): Result<U, E | F>
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  andPop(_f: any): any {
-    return err(this.error)
+  andPop(f: any): any {
+    this.breadcrumbs.push('andPop: ' + generateBreadcrumb(f))
+    return err(this.error, this.breadcrumbs)
   }
 
-  orElse<R extends Result<unknown, unknown>>(f: (e: E) => R): Result<OkOf<R> | T, ErrOf<R>>
-  orElse<U, A>(f: (e: E) => Result<U, A>): Result<U | T, A>
+  orElse<R extends Result<unknown, unknown>>(f: (e: E, breadcrumbs: string[]) => R): Result<OkOf<R> | T, ErrOf<R>>
+  orElse<U, A>(f: (e: E, breadcrumbs: string[]) => Result<U, A>): Result<U | T, A>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  orElse(f: any): any {
-    return f(this.error)
+  orElse(f: (e: E, breadcrumbs: string[]) => any): any {
+    this.breadcrumbs.push('orElse: ' + generateBreadcrumb(f))
+    return f(this.error, this.breadcrumbs)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  asyncAndThen<U, F>(_f: (t: T) => ResultAsync<U, F>): ResultAsync<U, E | F> {
+  asyncAndThen<U, F>(f: (t: T) => ResultAsync<U, F>): ResultAsync<U, E | F> {
+    this.breadcrumbs.push('asyncAndThen: ' + generateBreadcrumb(f))
     return errAsync<U, E>(this.error)
   }
 
-  asyncAndThrough<F>(_f: (t: T) => ResultAsync<unknown, F>): ResultAsync<T, E | F> {
+  asyncAndThrough<F>(f: (t: T) => ResultAsync<unknown, F>): ResultAsync<T, E | F> {
+    this.breadcrumbs.push('asyncAndThrough: ' + generateBreadcrumb(f))
     return errAsync<T, E>(this.error)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  asyncMap<U>(_f: (t: T) => Promise<U>): ResultAsync<U, E> {
+  asyncMap<U>(f: (t: T) => Promise<U>): ResultAsync<U, E> {
+    this.breadcrumbs.push('asyncMap: ' + generateBreadcrumb(f))
     return errAsync<U, E>(this.error)
   }
 
   unwrapOr<A>(v: A): T | A {
+    this.breadcrumbs.push('unwrapOr')
     return v
   }
 
-  match<A, B = A>(_ok: (t: T) => A, f: (e: E) => B): A | B {
-    return f(this.error)
+  match<A, B = A>(_ok: (t: T) => A, f: (e: E, breadcrumbs: string[]) => B): A | B {
+    this.breadcrumbs.push('match: ' + generateBreadcrumb(f))
+    return f(this.error, this.breadcrumbs)
   }
 
   safeUnwrap(): Generator<Err<never, E>, T> {
     const error = this.error
     return (function* () {
-      yield err(error)
+      yield err(error, this.breadcrumbs)
 
       throw new Error('Do not use this generator out of `safeTry`')
     })()
@@ -528,4 +567,4 @@ const square: (number: number) => Result<number, Error> = Result.fromThrowable(
 const some = ok(2)
   .andPush(square)
   .andPush(([, v]) => double(v))
-const someOther = ok(2).andPop(square).andThen(double)
+const someOther = ok([2]).andPop(square).andThen(double)
