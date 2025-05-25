@@ -21,7 +21,8 @@
     "skipLibCheck": true
   },
   "include": [
-    "./index.test.ts",
+    "./result.test.ts",
+    "./result-async.test.ts",
     "./typecheck-tests.ts"
   ]
 }
