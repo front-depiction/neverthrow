@@ -48,3 +48,10 @@ export const combineResultAsyncListWithAllErrors = <T, E>(
   asyncResultList: readonly ResultAsync<T, E>[],
 ): ResultAsync<readonly T[], E[]> =>
   ResultAsync.fromSafePromise(Promise.all(asyncResultList)).andThen(combineResultListWithAllErrors)
+
+export function isIterable(obj: unknown): obj is Iterable<unknown> {
+  return obj !== null && typeof obj === 'object' && Symbol.iterator in obj
+}
+export function isIterator(obj: unknown): obj is Iterator<unknown> {
+  return obj !== null && typeof obj === 'object' && 'next' in obj && typeof obj.next === 'function'
+}
