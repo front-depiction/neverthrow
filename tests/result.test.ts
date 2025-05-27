@@ -622,21 +622,20 @@ describe('Result.fromThrowable', () => {
 
 describe('ResultIter helper methods', () => {
   it('map → toArray', () => {
-    const arr = ok(5)
-      .iter()
-
+    const arr = ok([5])
+      .innerIter()
       .map((v: number) => v * 2)
       .toArray()
     expect(arr).toEqual([10])
   })
 
   it('filter keeps / removes', () => {
-    const kept = ok(3)
-      .iter()
+    const kept = ok([3])
+      .innerIter()
       .filter((v) => v > 0)
       .toArray()
-    const pruned = ok(3)
-      .iter()
+    const pruned = ok([3])
+      .innerIter()
       .filter((v) => v < 0)
       .toArray()
     expect(kept).toEqual([3])
@@ -644,43 +643,44 @@ describe('ResultIter helper methods', () => {
   })
 
   /*   it('flatMap flattens first yielded iterable', () => {
-    const iter = ok(2)
-      .iter()
+    const iter = ok([2])
+      .innerIter()
       .flatMap((v: number) => [v, v * 2]) // [2,4]
       .toArray()
     expect(iter).toEqual([2, 4])
   }) */
 
   it('drop(n) empties when n ≥ 1', () => {
-    const empty = ok('x').iter().drop(1).toArray()
+    const empty = ok(['x']).innerIter().drop(1).toArray()
     expect(empty).toEqual([])
   })
 
   it('take(n) controls cardinality', () => {
-    const full = ok('x').iter().take(1).toArray()
-    const empty = ok('x').iter().take(0).toArray()
+    const full = ok(['x']).innerIter().take(1).toArray()
+    const empty = ok(['x']).innerIter().take(0).toArray()
     expect(full).toEqual(['x'])
     expect(empty).toEqual([])
   })
 
   it('every / some / find behave correctly', () => {
-    const it = ok(7).iter()
+    const it = ok([7]).innerIter()
     expect(it.every((v) => v > 0)).toBe(true)
     expect(it.some((v) => v === 7)).toBe(true)
     expect(it.find((v) => v === 7)).toBe(7)
 
-    const errIter = err<number, string>('boom').iter()
+    const errIter = err<number[], string>('boom').innerIter()
     expect(errIter.every(() => false)).toBe(true) // vacuously true
     expect(errIter.some(() => true)).toBe(false)
     expect(errIter.find(() => true)).toBe(undefined)
   })
 
   it('reduce accumulates or returns seed', () => {
-    const sum = ok(4)
-      .iter()
+    const sum = ok([4])
+      .innerIter()
       .reduce((acc, v) => acc + v, 1)
-    const seed = err<number, string>('x')
-      .iter()
+
+    const seed = err<number[], string>('x')
+      .innerIter()
       .reduce((acc, v) => acc + v, 1)
     expect(sum).toBe(5)
     expect(seed).toBe(1)
@@ -688,15 +688,15 @@ describe('ResultIter helper methods', () => {
 
   it('forEach runs side-effect exactly once on Ok', () => {
     const spy = vi.fn()
-    ok('hi').iter().forEach(spy)
+    ok(['hi']).innerIter().forEach(spy)
     expect(spy).toHaveBeenCalledTimes(1)
-    err<string, string>('nope').iter().forEach(spy)
+    err<string[], string>('nope').innerIter().forEach(spy)
     expect(spy).toHaveBeenCalledTimes(1) // unchanged
   })
 
   it('collect() returns Result<Array>', () => {
-    const okArr = ok(9).iter().collect()
-    const errArr = err<number, string>('err').iter().collect()
+    const okArr = ok([9]).innerIter().collect()
+    const errArr = err<number[], string>('err').innerIter().collect()
     expect(okArr.isOk()).toBe(true)
     expect(okArr.value).toEqual([9])
     expect(errArr.isErr()).toBe(true)
@@ -706,7 +706,7 @@ describe('ResultIter helper methods', () => {
   describe('Complex chaining scenarios', () => {
     it('handles complex map/filter/reduce chains', () => {
       const result = ok([1, 2, 3, 4, 5])
-        .iter()
+        .innerIter()
         .map((nums) => nums)
         .filter((n) => n % 2 === 0)
         .map((n) => n * 2)
@@ -717,7 +717,7 @@ describe('ResultIter helper methods', () => {
 
     it('collects complex transformations back to Result', () => {
       const result = ok([1, 2, 3, 4, 5])
-        .iter()
+        .innerIter()
         .map((nums) => nums)
         .filter((n) => n > 2)
         .map((n) => n.toString())
@@ -729,7 +729,7 @@ describe('ResultIter helper methods', () => {
 
     it('preserves error state through complex chains', () => {
       const result = err<number[], string>('error')
-        .iter()
+        .innerIter()
         .map((nums) => nums)
         .filter((n) => n > 0)
         .map((n) => n * 2)
@@ -741,7 +741,7 @@ describe('ResultIter helper methods', () => {
 
     it('handles nested Result types in collect', () => {
       const result = ok([ok(1), ok(2), err<number, string>('nested error')])
-        .iter()
+        .innerIter()
         .map((results) => results)
         .collect()
 
