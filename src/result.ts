@@ -1,13 +1,8 @@
 import { errAsync, ResultAsync } from './result-async'
+import { resultFn, ResultCallable } from './result-function'
 import { createNeverThrowError, ErrorConfig } from './_internals/error'
-import {
-  combineResultList,
-  combineResultListWithAllErrors,
-  isIterable,
-  isIterator,
-} from './_internals/utils'
+import { combineResultList, combineResultListWithAllErrors } from './_internals/utils'
 import { ErrOf, ErrTuple, OkOf, OkTuple } from './_internals/types'
-import { LazyIterator } from './_internals/lazyiterator'
 
 // Discriminated union for Result data
 export type ResultData<T, E> = {
@@ -35,17 +30,11 @@ export class Result<T, E> {
    * arguments but returning `Ok` if successful, `Err` if the function throws
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  static fromThrowable<Fn extends (...args: readonly any[]) => any, E>(
-    fn: Fn,
+  static fromThrowable<T, E, Args extends unknown[]>(
+    fn: (...args: Args) => T,
     errorFn?: (e: unknown) => E,
-  ): (...args: Parameters<Fn>) => Result<ReturnType<Fn>, E> {
-    return (...args) => {
-      try {
-        return ok(fn(...args))
-      } catch (e) {
-        return err(errorFn ? errorFn(e) : e)
-      }
-    }
+  ): ResultCallable<Args, T, E> {
+    return resultFn(fn)
   }
 
   static combine<A extends readonly Result<unknown, unknown>[]>(resultList: A): CombineResults<A>
@@ -180,12 +169,6 @@ export class Result<T, E> {
   match<A, B = A>(okFn: (t: T) => A, errFn: (e: E) => B): A | B {
     return this.isOk() ? okFn(this.data.value!) : errFn(this.data.error!)
   }
-
-  iter(): ResultIter<T, E> {
-    // lazy 0-or-1 iterator that defers work to ResultIter
-    return ResultIter.fromResult(this)
-  }
-
   /**
    * @deprecated Emulates Rust's `?` in `safeTry`; will be removed in 9.0.0.
    */
@@ -312,60 +295,4 @@ export function err<T = never, E = unknown>(error: E): Result<T, E>
 export function err<T = never, E extends void = void>(error: void): Result<T, void>
 export function err<T = never, E = unknown>(error: E): Result<T, E> {
   return new Err(error)
-}
-
-export class ResultIter<T, E = never> extends LazyIterator<T> {
-  /** carries Err information through adapter chains (undefined → the source was Ok) */
-  private readonly _err?: E
-
-  /** public: ctor always receives a generator + retained error */
-  public constructor(gen: () => Generator<T>, err?: E) {
-    super(gen)
-    this._err = err
-  }
-
-  /** Convert a `Result` into a one-or-zero-elements iterator */
-  static fromResult<T, E>(r: Result<T, E>): ResultIter<T, E> {
-    return r.isOk()
-      ? new ResultIter(function* () {
-          yield r.value
-        })
-      : new ResultIter(function* () {
-          /* empty */
-        }, r.error)
-  }
-
-  static fromGenerator<T, E>(gen: () => Generator<T>, err?: E): ResultIter<T, E> {
-    return new ResultIter(gen, err)
-  }
-
-  /** Propagate `_err` when helpers create a new iterator */
-  protected _create<U>(gen: () => Generator<U>): ResultIter<U, E> & this {
-    // we KNOW `this.constructor` is a subclass of ResultIter
-    const Ctor = (this.constructor as unknown) as new (g: () => Generator<U>, e?: E) => ResultIter<
-      U,
-      E
-    >
-    return (new Ctor(gen, (this as ResultIter<unknown, E>)._err) as unknown) as ResultIter<U, E> &
-      this
-  }
-
-  /** `collect()` now always returns a faithful `Result` */
-  collect(): Result<T[], E> {
-    if (this._err !== undefined) return Result.err(this._err)
-
-    const out: T[] = []
-    for (const v of this) out.push(v)
-    return Result.ok(out)
-  }
-
-  /** Unchanged static helper */
-  static collectResults = <T, E>(it: Iterable<Result<T, E>>): Result<T[], E> => {
-    const out: T[] = []
-    for (const r of it) {
-      if (r.isErr()) return Result.err(r.error)
-      out.push(r.value)
-    }
-    return Result.ok(out)
-  }
 }
