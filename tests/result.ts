@@ -1,6 +1,6 @@
 import * as td from 'testdouble'
 
-import { err, Err, errAsync, fromThrowable, ok, Ok, okAsync, Result, ResultAsync } from '../src'
+import { err, errAsync, fromThrowable, ok, okAsync, Result, ResultAsync } from '../src'
 
 import { vi, describe, expect, it, beforeEach } from 'vitest'
 
