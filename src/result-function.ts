@@ -36,6 +36,9 @@ import { Result, ok, err } from '.'
 
 type Tail<T extends unknown[]> = T extends [unknown, ...infer R] ? R : never
 type Head<T extends unknown[]> = T extends [infer H, ...unknown[]] ? H : never
+function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
+  return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
+}
 
 /**
  * ArgumentInput: Represents the different ways arguments can be provided to a ResultCallable
@@ -48,11 +51,6 @@ export type ArgumentInput<T, E = unknown> = T | (() => T) | Result<T, E> | (() =
 // =============================================================================
 // HELPER PREDICATES
 // =============================================================================
-
-function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
-  return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
-}
-
 function isFunction(value: unknown): value is () => unknown {
   return typeof value === 'function'
 }
@@ -121,7 +119,6 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
       }
       processedArgs.push(result.value)
     }
-    console.log('calling fn', this.fn, 'with args: ', processedArgs)
     // All args processed successfully, call the function
     return this.fn(...(processedArgs as Args))
   }
@@ -206,7 +203,7 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
  */
 export function resultFn<Args extends unknown[], R, E = never>(
   fn: (...args: Args) => R | Result<R, E>,
-  argsList: ArgumentInput<unknown, unknown>[] = [],
+  argsList: ArgumentInput<unknown>[] = [],
 ): ResultCallable<Args, R, E> {
   // Wrap the function to ensure it always returns a Result
   const wrappedFn = (...args: Args): Result<R, E> => {

@@ -16,6 +16,7 @@ export namespace Result {
   export const combineWithAllErrors = ResultUtils.combineWithAllErrors
   export const fromJSON = ResultUtils.fromJSON
   export const deserialize = ResultUtils.deserialize
+  export const lift = ResultUtils.lift
 }
 
 export const fromThrowable = ResultUtils.fromThrowable
@@ -25,3 +26,4 @@ export const combine = ResultUtils.combine
 export const combineWithAllErrors = ResultUtils.combineWithAllErrors
 export const fromJSON = ResultUtils.fromJSON
 export const deserialize = ResultUtils.deserialize
+export const lift = ResultUtils.lift

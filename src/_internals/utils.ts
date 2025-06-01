@@ -56,3 +56,7 @@ export function isIterable(obj: unknown): obj is Iterable<unknown> {
 export function isIterator(obj: unknown): obj is Iterator<unknown> {
   return obj !== null && typeof obj === 'object' && 'next' in obj && typeof obj.next === 'function'
 }
+
+export function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
+  return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
+}
