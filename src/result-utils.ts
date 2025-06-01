@@ -1,6 +1,38 @@
 import { Ok, Err, SerializedResult, Result as ResultType } from './result'
 import { resultFn, ResultCallable } from './result-function'
-import { ErrTuple, OkTuple } from './_internals/types'
+
+/**
+ * Short circuits on the FIRST Err value that we find
+ */
+function combineResultList<T, E>(list: readonly ResultType<T, E>[]): ResultType<readonly T[], E> {
+  const out: T[] = []
+  for (const r of list) {
+    if (r.isErr()) return err(r.error)
+      
+    out.push(r.value)
+  }
+  return ok(out)
+}
+
+/**
+ * Accumulate *all* Err<E> into an array. If unknown errors, Err<E[]>;
+ * otherwise Ok<T[]> of all the values.
+ */
+function combineResultListWithAllErrors<T, E>(
+  list: readonly ResultType<T, E>[],
+): ResultType<readonly T[], E[]> {
+  const oks: T[] = []
+  const errs: E[] = []
+
+  for (const r of list) {
+    r.match(
+      (v) => oks.push(v),
+      (e) => errs.push(e),
+    )
+  }
+
+  return errs.length > 0 ? err(errs) : ok(oks)
+}
 
 /**
  * Creates an Ok Result with the given value
@@ -56,61 +88,60 @@ export function fromThrowable<T, E, Args extends unknown[]>(
   return (resultFn(fn).mapErr(errorFn) as unknown) as ResultCallable<Args, T, E>
 }
 
-/** First-error-wins combine (handles the empty list case) */
-export type CombineResults<
-  T extends readonly [ResultType<unknown, unknown>, ...ResultType<unknown, unknown>[]]
-> = T extends [] ? ResultType<never, never> : ResultType<OkTuple<T>, ErrTuple<T>[number]>
+/** Recursive type to extract only value types, using Head/Tail pattern */
+type CombineValues<T> = T extends []
+  ? []
+  : T extends readonly [infer H, ...infer Rest]
+  ? H extends ResultType<infer V, infer _E>
+    ? [V, ...CombineValues<Rest>]
+    : never
+  : never
 
-/** Collect-all-errors combine (handles the empty list case) */
-export type CombineResultsWithAllErrorsArray<
-  T extends readonly ResultType<unknown, unknown>[]
-> = T extends [] ? ResultType<never, never> : ResultType<OkTuple<T>, ErrTuple<T>[number][]>
+/** Recursive type to extract only error types, using Head/Tail pattern */
+type CombineSingleErrors<T> = T extends []
+  ? never
+  : T extends readonly [infer H, ...infer Rest]
+  ? H extends ResultType<infer _V, infer E>
+    ? unknown extends E
+      ? CombineSingleErrors<Rest>
+      : E | CombineSingleErrors<Rest>
+    : never
+  : never
 
-/**
- * Combines multiple Results into a single Result
- * If all Results are Ok, returns Ok with array of all values
- * If any Result is Err, returns the first Err encountered
- */
-export function combine<
-  A extends readonly [ResultType<unknown, unknown>, ...ResultType<unknown, unknown>[]]
->(...resultList: A): CombineResults<A>
-export function combine(
-  resultList: readonly ResultType<unknown, unknown>[],
-): ResultType<unknown, unknown> {
-  const values: unknown[] = []
-  for (const result of resultList) {
-    if (result.isErr()) {
-      return new Err(result.error)
-    }
-    values.push(result.value)
-  }
-  return new Ok(values)
+/** Updated CombineResults using the recursive types */
+export type CombineSingleResults<T> = T extends []
+  ? ResultType<never, never>
+  : ResultType<CombineValues<T>, CombineSingleErrors<T>>
+
+// eslint-disable-next-line prettier/prettier
+export function combine<const T extends readonly [...ResultType<unknown, unknown>[]]>(
+  resultList: T,
+): CombineSingleResults<T> {
+  return combineResultList(resultList) as CombineSingleResults<T>
 }
+
+export type CombineMultipleResults<T> = T extends []
+  ? ResultType<never, never>
+  : ResultType<CombineValues<T>, CombineMultipleErrors<T>>
+
+type CombineMultipleErrors<T> = T extends []
+  ? []
+  : T extends readonly [infer H, ...infer Rest]
+  ? H extends ResultType<unknown, infer E>
+    ? unknown extends E
+      ? CombineMultipleErrors<Rest>
+      : [E, ...CombineMultipleErrors<Rest>]
+    : never
+  : never
 
 /**
  * Combines multiple Results into a single Result, collecting all errors
  * If all Results are Ok, returns Ok with array of all values
  * If any Result is Err, returns Err with array of all errors
  */
-export function combineWithAllErrors<
-  T extends readonly [ResultType<unknown, unknown>, ...ResultType<unknown, unknown>[]]
->(resultList: [...T]): CombineResultsWithAllErrorsArray<T>
-export function combineWithAllErrors<A extends readonly ResultType<unknown, unknown>[]>(
-  resultList: A,
-): CombineResultsWithAllErrorsArray<A>
-export function combineWithAllErrors(
-  resultList: readonly ResultType<unknown, unknown>[],
-): ResultType<unknown, unknown> {
-  const values: unknown[] = []
-  const errors: unknown[] = []
-
-  for (const result of resultList) {
-    if (result.isOk()) {
-      values.push(result.value)
-    } else {
-      errors.push(result.error)
-    }
-  }
-
-  return errors.length > 0 ? new Err(errors) : new Ok(values)
+export function combineWithAllErrors<const T extends readonly [...ResultType<unknown, unknown>[]]>(
+  resultList: T,
+): CombineMultipleResults<T> {
+  return combineResultListWithAllErrors(resultList) as CombineMultipleResults<T>
 }
+

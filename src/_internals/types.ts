@@ -1,4 +1,4 @@
-import { Result } from '../result'
+import type { Result } from '../result'
 import { ResultAsync } from '../result-async'
 
 export type SomeResult<T, E> = Result<T, E> | ResultAsync<T, E>

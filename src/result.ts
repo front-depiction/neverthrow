@@ -65,7 +65,7 @@ class BaseResult<T, E> {
     return 'value' in this.data
   }
 
-  isErr(): this is Err<never, E> {
+  isErr(): this is Err<T, E> {
     return 'error' in this.data
   }
 
@@ -228,7 +228,6 @@ export class Ok<T, E> extends BaseResult<T, E> {
     super({ value })
   }
 
-  // Getters for backward compatibility (with proper type safety)
   get value(): T {
     return this.data.value
   }
