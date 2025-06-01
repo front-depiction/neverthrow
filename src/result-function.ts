@@ -32,7 +32,7 @@
  *    - Composed: resultFn(fn).applyArg(arg1).map(transform).andThen(chain)()
  */
 
-import { Result, ok, err, Err } from '.'
+import { Result, ok, err } from '.'
 
 type Tail<T extends unknown[]> = T extends [unknown, ...infer R] ? R : never
 type Head<T extends unknown[]> = T extends [infer H, ...unknown[]] ? H : never
@@ -42,13 +42,8 @@ type Head<T extends unknown[]> = T extends [infer H, ...unknown[]] ? H : never
  * - T: A direct value
  * - Result<T, E>: A Result that may contain the value or an error
  * - () => Result<T, E>: A function that lazily produces a Result
- *
- * Examples:
- * - 42 (direct value)
- * - ok(42) (Result value)
- * - () => ok(42) (lazy Result producer)
  */
-export type ArgumentInput<T, E = unknown> = T | Result<T, E> | (() => Result<T, E>)
+export type ArgumentInput<T, E = unknown> = T | (() => T) | Result<T, E> | (() => Result<T, E>)
 
 // =============================================================================
 // HELPER PREDICATES
@@ -69,9 +64,8 @@ function isFunction(value: unknown): value is () => unknown {
 /**
  * _ResultCallable: A wrapper class that enables functional composition with Result types
  *
- * Purpose: Provides a lazy, composable way to build and execute functions that work with Results.
- * This class implements the "railway-oriented programming" pattern where operations can be
- * chained together and will short-circuit on the first error.
+ * Provides a lazy, composable way to build and execute functions that work with Results.
+ * Implements "railway-oriented programming" where operations can be chained and will short-circuit on the first error.
  *
  * Key Design Principles:
  * 1. Lazy Evaluation: Arguments are not processed until execution time
@@ -82,25 +76,20 @@ function isFunction(value: unknown): value is () => unknown {
 class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
   /**
    * constructor: ((...args: Args) => Result<FnRes, FnErr>) -> _ResultCallable
-   * Purpose: Creates a new ResultCallable wrapper around a function
+   * Creates a new ResultCallable wrapper around a function
    */
-  constructor(private fn: (...args: Args) => Result<FnRes, FnErr>) {}
+  constructor(
+    private fn: (...args: Args) => Result<FnRes, FnErr>,
+    private readonly argsList: ArgumentInput<unknown, unknown>[] = [],
+  ) {}
 
   /**
    * processArgument: ArgumentInput<T, E> -> Result<T, E>
-   * Purpose: Converts any argument input type into a Result, handling lazy evaluation
-   *
-   * Strategy:
-   * 1. If argument is a function, call it and return the Result
-   * 2. If argument is already a Result, return it as-is
-   * 3. If argument is a plain value, wrap it in ok()
-   * 4. If any step throws, wrap the error in err()
-   *
-   * Examples:
-   * processArgument(42) => ok(42)
-   * processArgument(ok(42)) => ok(42)
-   * processArgument(() => ok(42)) => ok(42)
-   * processArgument(() => { throw new Error() }) => err(Error)
+   * Converts any argument input type into a Result, handling lazy evaluation.
+   * - If argument is a function, call it and return the Result
+   * - If argument is already a Result, return it as-is
+   * - If argument is a plain value, wrap it in ok()
+   * - If any step throws, wrap the error in err()
    */
   private processArgument<T, E>(arg: ArgumentInput<T, E>): Result<T, E> {
     try {
@@ -117,104 +106,85 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
   }
 
   /**
+   * processArgsAndExecute: ArgumentInput<unknown, unknown>[] -> Result<FnRes, FnErr>
+   * Processes all arguments in order and executes the function, short-circuiting on first error.
+   * Arguments are processed left-to-right in the order they were applied.
+   */
+  private processArgsAndExecute(allArgs: ArgumentInput<unknown, unknown>[]): Result<FnRes, FnErr> {
+    const processedArgs: unknown[] = []
+
+    // Process each argument in order, short-circuit on first error
+    for (const arg of allArgs) {
+      const result = this.processArgument(arg)
+      if (result.isErr()) {
+        return result as Result<FnRes, FnErr>
+      }
+      processedArgs.push(result.value)
+    }
+    console.log('calling fn', this.fn, 'with args: ', processedArgs)
+    // All args processed successfully, call the function
+    return this.fn(...(processedArgs as Args))
+  }
+
+  /**
    * applyArg: ArgumentInput<Head<Args>, ParamErr> -> ResultCallable<Tail<Args>, FnRes, FnErr | ParamErr>
-   * Purpose: Applies one argument to the function, returning a new ResultCallable with one fewer parameter
-   *
-   * Key Insight: This implements "partial application" for Result-aware functions. The argument
-   * is stored for lazy evaluation rather than being processed immediately, enabling efficient
-   * composition and error short-circuiting.
-   *
-   * Note: Arguments are applied in a right-to-left order—meaning the last argument you apply
-   * will be evaluated first when the function is eventually executed. This is due to how each
-   * call to `applyArg` wraps the function, so the most recently applied argument is processed
-   * before any previously applied arguments.
-   *
-   * Examples:
-   * const add = resultFn((a: number, b: number) => a + b)
-   * const add5 = add.applyArg(5)  // Now expects only one argument
-   * add5(3) => ok(8)
+   * Applies one argument to the function, returning a new ResultCallable with one fewer parameter.
+   * The argument is stored for lazy evaluation rather than being processed immediately.
+   * Each call creates a new instance with the argument added to the list.
+   * Arguments are processed in left-to-right order when the function is executed.
    */
   applyArg<ParamErr = never>(
     arg: ArgumentInput<Head<Args>, ParamErr>,
   ): ResultCallable<Tail<Args>, FnRes, FnErr | ParamErr> {
-    // Create a new function that processes the stored argument at execution time
-    const newFn = (...remainingArgs: Tail<Args>) => {
-      // Lazy evaluation: process the argument only when the function is called
-      const result = this.processArgument(arg)
+    // Create NEW args list (immutable)
+    const newArgsList = [...this.argsList, arg]
 
-      if (result.isErr()) {
-        return result as Err<never, FnErr | ParamErr>
-      }
-
-      // If successful, combine with remaining args and call the original function
-      const allArgs = [result.value, ...remainingArgs] as Args
-      return this.fn(...allArgs)
-    }
-    return resultFn(newFn)
+    // Return new ResultCallable instance, we can safely cast because we control the arguments passed in during execution
+    return (resultFn(this.fn, newArgsList) as unknown) as ResultCallable<
+      Tail<Args>,
+      FnRes,
+      FnErr | ParamErr
+    >
   }
 
   /**
    * map: ((value: FnRes) => U) -> ResultCallable<Args, U, FnErr>
-   * Purpose: Transforms the success value of the ResultCallable when executed
-   *
-   * This follows the Functor pattern - it lifts a regular function into the Result context.
+   * Transforms the success value of the ResultCallable when executed.
    * The transformation only occurs if the Result is Ok.
-   *
-   * Examples:
-   * const double = resultFn((x: number) => x * 2)
-   * const doubleAndStringify = double.map(String)
-   * doubleAndStringify(5) => ok("10")
    */
   map<U>(f: (value: FnRes) => U): ResultCallable<Args, U, FnErr> {
     const newFn = (...args: Args) => this.fn(...args).map(f)
-    return resultFn(newFn)
+    return resultFn(newFn, this.argsList)
   }
 
   /**
    * mapErr: ((error: FnErr) => E2) -> ResultCallable<Args, FnRes, E2>
-   * Purpose: Transforms the error value of the ResultCallable when executed
-   *
-   * This allows error handling and transformation in the composition chain.
+   * Transforms the error value of the ResultCallable when executed.
    * The transformation only occurs if the Result is Err.
-   *
-   * Examples:
-   * const parseNumber = resultFn((s: string) => {
-   *   const n = parseInt(s);
-   *   if (isNaN(n)) throw new Error("Invalid");
-   *   return n;
-   * })
-   * const withBetterError = parseNumber.mapErr(e => `Parse failed: ${e.message}`)
    */
   mapErr<E2>(f: (error: FnErr) => E2): ResultCallable<Args, FnRes, E2> {
     const newFn = (...args: Args) => this.fn(...args).mapErr(f)
-    return resultFn(newFn)
+    return resultFn(newFn, this.argsList)
   }
 
   /**
    * andThen: ((value: FnRes) => Result<U, E2>) -> ResultCallable<Args, U, FnErr | E2>
-   * Purpose: Chains another Result-producing operation after this one
-   *
-   * This follows the Monad pattern - it allows chaining operations that can fail.
-   * Also known as "flatMap" in other functional programming contexts.
-   *
-   * Examples:
-   * const divide = resultFn((a: number, b: number) => b === 0 ? err("Division by zero") : ok(a / b))
-   * const safeSqrt = divide.andThen(x => x < 0 ? err("Negative sqrt") : ok(Math.sqrt(x)))
+   * Chains another Result-producing operation after this one.
+   * Allows chaining operations that can fail.
    */
   andThen<U, E2>(f: (value: FnRes) => Result<U, E2>): ResultCallable<Args, U, FnErr | E2> {
     const newFn = (...args: Args) => this.fn(...args).andThen(f)
-    return resultFn(newFn)
+    return resultFn(newFn, this.argsList)
   }
 
   /**
    * _execute: ...Args -> Result<FnRes, FnErr>
-   * Purpose: Executes the composed function with the given arguments
-   *
-   * This is the "escape hatch" from the composition world back to regular Results.
+   * Executes the composed function with the given arguments.
    * All lazy evaluation and argument processing happens here.
    */
   _execute(...args: Args): Result<FnRes, FnErr> {
-    return this.fn(...args)
+    const allArgs = [...this.argsList, ...args]
+    return this.processArgsAndExecute(allArgs)
   }
 }
 
@@ -224,25 +194,19 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
 
 /**
  * resultFn: ((...args: Args) => R | Result<R, E>) -> ResultCallable<Args, R, E>
- * Purpose: Creates a ResultCallable from a regular function that may or may not return a Result
- *
- * This is the main entry point for the ResultCallable system. It handles functions that:
+ * Creates a ResultCallable from a regular function that may or may not return a Result.
+ * Handles functions that:
  * 1. Return plain values (wraps in ok())
  * 2. Return Results (uses as-is)
  * 3. Throw exceptions (catches and wraps in err())
  *
- * The Proxy Pattern:
- * This function uses JavaScript's proxy capabilities to make the returned object both:
+ * Uses JavaScript's proxy capabilities to make the returned object both:
  * - Callable like a function (for direct execution)
  * - Have methods like applyArg, map, etc. (for composition)
- *
- * Examples:
- * const add = resultFn((a: number, b: number) => a + b)
- * add(2, 3) => ok(5)  // Direct call
- * add.applyArg(2)(3) => ok(5)  // Composed call
  */
 export function resultFn<Args extends unknown[], R, E = never>(
   fn: (...args: Args) => R | Result<R, E>,
+  argsList: ArgumentInput<unknown, unknown>[] = [],
 ): ResultCallable<Args, R, E> {
   // Wrap the function to ensure it always returns a Result
   const wrappedFn = (...args: Args): Result<R, E> => {
@@ -259,7 +223,7 @@ export function resultFn<Args extends unknown[], R, E = never>(
     }
   }
 
-  const instance = new _ResultCallable(wrappedFn)
+  const instance = new _ResultCallable(wrappedFn, argsList)
 
   // Proxy Magic: Create a function that can be called directly but also has methods
   // This allows: resultFn(f)(args) AND resultFn(f).applyArg(arg)
@@ -272,11 +236,8 @@ export function resultFn<Args extends unknown[], R, E = never>(
 
 /**
  * from: Alias for resultFn
- * Purpose: Provides a more descriptive name for creating ResultCallables from existing functions
- *
- * Usage preference:
- * - Use `resultFn` when defining new functions
- * - Use `from` when adapting existing functions
+ * Provides a more descriptive name for creating ResultCallables from existing functions.
+ * Use `resultFn` when defining new functions, `from` when adapting existing functions.
  */
 export const from = resultFn
 
