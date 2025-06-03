@@ -115,10 +115,10 @@ export type CombineSingleResults<T> = T extends []
   : ResultType<CombineValues<T>, CombineSingleErrors<T>>
 
 // eslint-disable-next-line prettier/prettier
-export function combine<const T extends readonly [...ResultType<unknown, unknown>[]]>(
-  resultList: T,
-): CombineSingleResults<T> {
-  return combineResultList(resultList) as CombineSingleResults<T>
+export function combine<T, E, const L extends readonly [...ResultType<T, E>[]]>(
+  resultList: L,
+): CombineSingleResults<L> {
+  return combineResultList(resultList) as CombineSingleResults<L>
 }
 
 export type CombineMultipleResults<T> = T extends []
@@ -140,10 +140,10 @@ type CombineMultipleErrors<T> = T extends []
  * If all Results are Ok, returns Ok with array of all values
  * If any Result is Err, returns Err with array of all errors
  */
-export function combineWithAllErrors<const T extends readonly [...ResultType<unknown, unknown>[]]>(
-  resultList: T,
-): CombineMultipleResults<T> {
-  return combineResultListWithAllErrors(resultList) as CombineMultipleResults<T>
+export function combineWithAllErrors<T, const L extends readonly [...ResultType<T, unknown>[]]>(
+  resultList: L,
+): CombineMultipleResults<L> {
+  return combineResultListWithAllErrors(resultList) as CombineMultipleResults<L>
 }
 
 // =============================================================================
