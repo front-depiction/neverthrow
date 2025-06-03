@@ -625,7 +625,7 @@ type CreateTuple<L, V = string> =
 
   (function describe(_ = 'combine') {
     (function it(_ = 'combines different results into one') {
-      type Expectation = Result<readonly [ number, string, boolean, boolean ], Error | string | string[]>;
+      type Expectation = Result<[ number, string, boolean, boolean ], Error | string | string[]>;
 
       const result = Result.combine([
         ok<number, string>(1),
@@ -639,7 +639,7 @@ type CreateTuple<L, V = string> =
     });
 
     (function it(_ = 'combines only ok results into one') {
-      type Expectation = Result<readonly [ number, string ], never>;
+      type Expectation = Result<[ number, string ], never>;
       
       const result = Result.combine([
         ok(1),

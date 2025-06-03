@@ -15,6 +15,9 @@ export type ResultData<T, E> =
 
 type OkData<T, E> = Extract<ResultData<T, E>, { value: T }>
 type ErrData<T, E> = Extract<ResultData<T, E>, { error: E }>
+function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
+  return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
+}
 
 // Enhanced serialization types
 export interface SerializedOk<T> {
@@ -219,6 +222,56 @@ class BaseResult<T, E> {
       config,
     )
   }
+
+  /**
+   * Applies a function contained in this Result to an argument.
+   * This is the traditional applicative "apply" operation.
+   *
+   * @param arg - Either a Result<U, E> or a plain value U
+   * @returns Result<V, E> where V is the return type of the function
+   *
+   * @example
+   * // With Result argument
+   * ok((x: number) => x * 2).apply(ok(5))        // Ok(10)
+   * ok((x: number) => x * 2).apply(5)             // Ok(10)
+   * ok((x: number) => x * 2).apply(err("bad"))   // Err("bad")
+   * err("bad func").apply(ok(5))                 // Err("bad func")
+   *
+   * // With plain argument
+   * ok((x: number) => x * 2).apply(5)            // Ok(10)
+   * err("bad func").apply(5)                     // Err("bad func")
+   */
+  apply<U, V>(this: Result<(arg: U) => V, E>, arg: Result<U, E> | U): Result<V, E> {
+    // If this Result contains an error, propagate it
+    if (this.isErr()) {
+      return new Err<V, E>(this.data.error!)
+    }
+
+    // Extract the function from this Result
+    const fn = this.data.value!
+
+    // Handle the argument
+    let argValue: U
+    if (isResultLike(arg)) {
+      // arg is a Result
+
+      if (arg.isErr()) {
+        return new Err<V, E>(arg.data.error!)
+      }
+      argValue = arg.value
+    } else {
+      // arg is a plain value
+      argValue = arg
+    }
+
+    // Apply the function to the argument
+    try {
+      const result = fn(argValue)
+      return new Ok<V, E>(result)
+    } catch (error) {
+      return new Err<V, E>(error as E)
+    }
+  }
 }
 
 export class Ok<T, E> extends BaseResult<T, E> {
@@ -237,7 +290,7 @@ export class Ok<T, E> extends BaseResult<T, E> {
   }
 
   // eslint-disable-next-line require-yield
-  *[Symbol.iterator](): Generator<Err<never, E>, T> {
+  *[Symbol.iterator](): Generator<Ok<never, E>, T> {
     return this.value
   }
 }

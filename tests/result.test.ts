@@ -847,3 +847,274 @@ describe('Utils', () => {
     })
   })
 })
+
+describe('Result.apply', () => {
+  // Type assertions for compile-time type checking
+  type ExpectedResultWithFunction<T, E> = Result<T, E>
+  type ExpectedApplyWithResult<T, U, E> = Result<U, E>
+  type ExpectedApplyWithValue<T, U, E> = Result<U, E>
+
+  describe('Basic Functionality', () => {
+    it('applies function to Result argument when both are Ok', () => {
+      const double = (x: number) => x * 2
+      const funcResult: ExpectedResultWithFunction<(x: number) => number, string> = ok(double)
+      const valueResult: ExpectedApplyWithResult<(x: number) => number, number, string> = funcResult.apply(ok(5))
+
+      expect(valueResult.isOk()).toBe(true)
+      expect(valueResult._unsafeUnwrap()).toBe(10)
+    })
+
+    it('applies function to plain value argument', () => {
+      const double = (x: number) => x * 2
+      const funcResult: ExpectedResultWithFunction<(x: number) => number, string> = ok(double)
+      const valueResult: ExpectedApplyWithValue<(x: number) => number, number, string> = funcResult.apply(5)
+
+      expect(valueResult.isOk()).toBe(true)
+      expect(valueResult._unsafeUnwrap()).toBe(10)
+    })
+
+    it('works with complex function types', () => {
+      const createUser = (id: number) => ({ id, name: `User${id}`, active: true })
+      const funcResult: ExpectedResultWithFunction<typeof createUser, string> = ok(createUser)
+      const userResult: ExpectedApplyWithResult<typeof createUser, ReturnType<typeof createUser>, string> = funcResult.apply(ok(123))
+
+      expect(userResult.isOk()).toBe(true)
+      expect(userResult._unsafeUnwrap()).toEqual({ id: 123, name: 'User123', active: true })
+    })
+
+    it('works with functions that return different types', () => {
+      const toString = (x: number) => x.toString()
+      const funcResult: ExpectedResultWithFunction<(x: number) => string, boolean> = ok(toString)
+      const stringResult: ExpectedApplyWithResult<(x: number) => string, string, boolean> = funcResult.apply(ok(42))
+
+      expect(stringResult.isOk()).toBe(true)
+      expect(stringResult._unsafeUnwrap()).toBe('42')
+    })
+  })
+
+  describe('Error Handling', () => {
+    it('propagates error from function Result', () => {
+      const funcResult: ExpectedResultWithFunction<(x: number) => number, string> = err('function error')
+      const valueResult: ExpectedApplyWithResult<(x: number) => number, number, string> = funcResult.apply(ok(5))
+
+      expect(valueResult.isErr()).toBe(true)
+      expect(valueResult._unsafeUnwrapErr()).toBe('function error')
+    })
+
+    it('propagates error from argument Result', () => {
+      const double = (x: number) => x * 2
+      const funcResult: ExpectedResultWithFunction<(x: number) => number, string> = ok(double)
+      const valueResult: ExpectedApplyWithResult<(x: number) => number, number, string> = funcResult.apply(err('argument error'))
+
+      expect(valueResult.isErr()).toBe(true)
+      expect(valueResult._unsafeUnwrapErr()).toBe('argument error')
+    })
+
+    it('propagates function error over argument when both are Err', () => {
+      const funcResult: ExpectedResultWithFunction<(x: number) => number, string> = err('function error')
+      const valueResult: ExpectedApplyWithResult<(x: number) => number, number, string> = funcResult.apply(err('argument error'))
+
+      expect(valueResult.isErr()).toBe(true)
+      expect(valueResult._unsafeUnwrapErr()).toBe('function error')
+    })
+
+    it('handles function that throws exceptions', () => {
+      const throwingFunc = (x: number) => {
+        if (x < 0) throw new Error('Negative input')
+        return x * 2
+      }
+      const funcResult: ExpectedResultWithFunction<typeof throwingFunc, string> = ok(throwingFunc)
+      const valueResult: ExpectedApplyWithResult<typeof throwingFunc, number, string | Error> = funcResult.apply(-5)
+
+      expect(valueResult.isErr()).toBe(true)
+      expect(valueResult._unsafeUnwrapErr()).toBeInstanceOf(Error)
+      expect((valueResult._unsafeUnwrapErr() as Error).message).toBe('Negative input')
+    })
+  })
+
+  describe('Type Safety and Inference', () => {
+    it('maintains correct types with heterogeneous error types', () => {
+      const double = (x: number) => x * 2
+      
+      // Test with different function that accepts union error types
+      const funcWithUnionError: Result<(x: number) => number, string | number> = ok(double)
+      const numErrorResult = funcWithUnionError.apply(err<number, number>(404))
+      expect(numErrorResult.isErr()).toBe(true)
+      expect(numErrorResult._unsafeUnwrapErr()).toBe(404)
+
+      // Test with object error type
+      const objError = { code: 500, message: 'Server error' }
+      const funcWithObjError: Result<(x: number) => number, string | typeof objError> = ok(double)
+      const objErrorResult = funcWithObjError.apply(err<number, typeof objError>(objError))
+      expect(objErrorResult.isErr()).toBe(true)
+      expect(objErrorResult._unsafeUnwrapErr()).toEqual(objError)
+    })
+
+    it('works with curried functions', () => {
+      const add = (x: number) => (y: number) => x + y
+      const addFive = (x: number) => add(5)(x)
+      
+      const funcResult: ExpectedResultWithFunction<typeof addFive, string> = ok(addFive)
+      const result: ExpectedApplyWithResult<typeof addFive, number, string> = funcResult.apply(ok(3))
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toBe(8)
+    })
+
+    it('handles functions with complex parameter types', () => {
+      interface Config {
+        timeout: number
+        retries: number
+      }
+
+      const processConfig = (config: Config) => ({
+        processedTimeout: config.timeout * 1000,
+        maxRetries: config.retries,
+        ready: true,
+      })
+
+      const funcResult: ExpectedResultWithFunction<typeof processConfig, string> = ok(processConfig)
+      const configArg: Config = { timeout: 5, retries: 3 }
+      const result: ExpectedApplyWithResult<typeof processConfig, ReturnType<typeof processConfig>, string> = funcResult.apply(ok(configArg))
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toEqual({
+        processedTimeout: 5000,
+        maxRetries: 3,
+        ready: true,
+      })
+    })
+  })
+
+  describe('Edge Cases', () => {
+    it('handles functions that return undefined', () => {
+      const voidFunc = (x: number) => {
+        console.log(x)
+        return undefined
+      }
+      
+      const funcResult: ExpectedResultWithFunction<typeof voidFunc, string> = ok(voidFunc)
+      const result: ExpectedApplyWithResult<typeof voidFunc, undefined, string> = funcResult.apply(42)
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toBeUndefined()
+    })
+
+    it('handles functions that return null', () => {
+      const nullFunc = (x: number) => (x > 10 ? null : x)
+      
+      const funcResult: ExpectedResultWithFunction<typeof nullFunc, string> = ok(nullFunc)
+      const result1: ExpectedApplyWithResult<typeof nullFunc, number | null, string> = funcResult.apply(15)
+      const result2: ExpectedApplyWithResult<typeof nullFunc, number | null, string> = funcResult.apply(5)
+
+      expect(result1.isOk()).toBe(true)
+      expect(result1._unsafeUnwrap()).toBeNull()
+
+      expect(result2.isOk()).toBe(true)
+      expect(result2._unsafeUnwrap()).toBe(5)
+    })
+
+    it('handles identity function', () => {
+      const identity = <T>(x: T) => x
+      
+      const funcResult: ExpectedResultWithFunction<typeof identity<number>, string> = ok(identity)
+      const result: ExpectedApplyWithResult<typeof identity<number>, number, string> = funcResult.apply(ok(42))
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toBe(42)
+    })
+
+    it('handles functions with array parameters and returns', () => {
+      const sumArray = (arr: number[]) => arr.reduce((sum, x) => sum + x, 0)
+      
+      const funcResult: ExpectedResultWithFunction<typeof sumArray, string> = ok(sumArray)
+      const result: ExpectedApplyWithResult<typeof sumArray, number, string> = funcResult.apply([1, 2, 3, 4, 5])
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toBe(15)
+    })
+
+    it('handles functions that modify objects', () => {
+      interface User {
+        id: number
+        name: string
+        email?: string
+      }
+
+      const addEmail = (user: User) => ({
+        ...user,
+        email: `${user.name.toLowerCase()}@example.com`,
+      })
+
+      const funcResult: ExpectedResultWithFunction<typeof addEmail, string> = ok(addEmail)
+      const userArg: User = { id: 1, name: 'John' }
+      const result: ExpectedApplyWithResult<typeof addEmail, User & { email: string }, string> = funcResult.apply(ok(userArg))
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toEqual({
+        id: 1,
+        name: 'John',
+        email: 'john@example.com',
+      })
+    })
+  })
+
+  describe('Performance and Behavior', () => {
+    it('does not call function when function Result is Err', () => {
+      const spy = vi.fn((x: number) => x * 2)
+      const funcResult: ExpectedResultWithFunction<typeof spy, string> = err('function error')
+      
+      funcResult.apply(ok(5))
+      
+      expect(spy).not.toHaveBeenCalled()
+    })
+
+    it('does not call function when argument Result is Err', () => {
+      const spy = vi.fn((x: number) => x * 2)
+      const funcResult: ExpectedResultWithFunction<typeof spy, string> = ok(spy)
+      
+      funcResult.apply(err('argument error'))
+      
+      expect(spy).not.toHaveBeenCalled()
+    })
+
+    it('calls function exactly once when both are Ok', () => {
+      const spy = vi.fn((x: number) => x * 2)
+      const funcResult: ExpectedResultWithFunction<typeof spy, string> = ok(spy)
+      
+      const result: ExpectedApplyWithResult<typeof spy, number, string> = funcResult.apply(ok(5))
+      
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledWith(5)
+      expect(result._unsafeUnwrap()).toBe(10)
+    })
+  })
+
+  describe('Composition and Chaining', () => {
+    it('can be chained with other Result operations', () => {
+      const double = (x: number) => x * 2
+      const toString = (x: number) => x.toString()
+      
+      const funcResult: ExpectedResultWithFunction<(x: number) => number, string> = ok(double)
+      const result = funcResult
+        .apply(ok(5))
+        .map(toString)
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toBe('10')
+    })
+
+    it('integrates with andThen for function application chains', () => {
+      const double = (x: number) => x * 2
+      const makeDoubler = (multiplier: number) => (x: number) => x * multiplier
+
+      const funcResult: ExpectedResultWithFunction<typeof makeDoubler, string> = ok(makeDoubler)
+      const result = funcResult
+        .apply(2)
+        .andThen((doubleFunc) => ok(doubleFunc).apply(ok(5)))
+
+      expect(result.isOk()).toBe(true)
+      expect(result._unsafeUnwrap()).toBe(10)
+    })
+  })
+})
