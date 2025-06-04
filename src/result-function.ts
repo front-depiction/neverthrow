@@ -36,9 +36,6 @@ import { Result, ok, err } from '.'
 
 type Tail<T extends unknown[]> = T extends [unknown, ...infer R] ? R : never
 type Head<T extends unknown[]> = T extends [infer H, ...unknown[]] ? H : never
-function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
-  return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
-}
 
 /**
  * ArgumentInput: Represents the different ways arguments can be provided to a ResultCallable
@@ -54,7 +51,9 @@ export type ArgumentInput<T, E = unknown> = T | (() => T) | Result<T, E> | (() =
 function isFunction(value: unknown): value is () => unknown {
   return typeof value === 'function'
 }
-
+function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
+  return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
+}
 // =============================================================================
 // CORE RESULT CALLABLE CLASS
 // =============================================================================
@@ -71,14 +70,19 @@ function isFunction(value: unknown): value is () => unknown {
  * 3. Composability: Methods return new ResultCallable instances for chaining
  * 4. Type Safety: Maintains proper TypeScript types throughout the chain
  */
-class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
+class _ResultCallable<
+  FnArgs extends unknown[],
+  FnRes,
+  FnErr = never,
+  ArgsList extends ArgumentInput<unknown, unknown>[] = []
+> {
   /**
    * constructor: ((...args: Args) => Result<FnRes, FnErr>) -> _ResultCallable
    * Creates a new ResultCallable wrapper around a function
    */
   constructor(
-    private fn: (...args: Args) => Result<FnRes, FnErr>,
-    private readonly argsList: ArgumentInput<unknown, unknown>[] = [],
+    private fn: (...args: FnArgs) => Result<FnRes, FnErr>,
+    private readonly argsList: ArgsList = ([] as unknown) as ArgsList,
   ) {}
 
   /**
@@ -89,7 +93,7 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
    * - If argument is a plain value, wrap it in ok()
    * - If any step throws, wrap the error in err()
    */
-  private processArgument<T, E>(arg: ArgumentInput<T, E>): Result<T, E> {
+  private processArgument<T, E = never>(arg: ArgumentInput<T, E>): Result<T, E> {
     try {
       if (isFunction(arg)) {
         return (arg as () => Result<T, E>)()
@@ -108,7 +112,7 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
    * Processes all arguments in order and executes the function, short-circuiting on first error.
    * Arguments are processed left-to-right in the order they were applied.
    */
-  private processArgsAndExecute(allArgs: ArgumentInput<unknown, unknown>[]): Result<FnRes, FnErr> {
+  private processArgsAndExecute(allArgs: [...ArgsList, ...FnArgs]): Result<FnRes, FnErr> {
     const processedArgs: unknown[] = []
 
     // Process each argument in order, short-circuit on first error
@@ -120,7 +124,7 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
       processedArgs.push(result.value)
     }
     // All args processed successfully, call the function
-    return this.fn(...(processedArgs as Args))
+    return this.fn(...(processedArgs as FnArgs))
   }
 
   /**
@@ -131,17 +135,12 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
    * Arguments are processed in left-to-right order when the function is executed.
    */
   applyArg<ParamErr = never>(
-    arg: ArgumentInput<Head<Args>, ParamErr>,
-  ): ResultCallable<Tail<Args>, FnRes, FnErr | ParamErr> {
-    // Create NEW args list (immutable)
+    arg: ArgumentInput<Head<FnArgs>, ParamErr>,
+  ): ResultCallable<Tail<FnArgs>, FnRes, FnErr | ParamErr> {
     const newArgsList = [...this.argsList, arg]
-
-    // Return new ResultCallable instance, we can safely cast because we control the arguments passed in during execution
-    return (resultFn(this.fn, newArgsList) as unknown) as ResultCallable<
-      Tail<Args>,
-      FnRes,
-      FnErr | ParamErr
-    >
+    // We can cast because we control the arguments passed in during execution
+    const newFn = (this.fn as unknown) as (...args: Tail<FnArgs>) => Result<FnRes, FnErr>
+    return resultFn(newFn, newArgsList)
   }
 
   /**
@@ -149,8 +148,8 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
    * Transforms the success value of the ResultCallable when executed.
    * The transformation only occurs if the Result is Ok.
    */
-  map<U>(f: (value: FnRes) => U): ResultCallable<Args, U, FnErr> {
-    const newFn = (...args: Args) => this.fn(...args).map(f)
+  map<U>(f: (value: FnRes) => U): ResultCallable<FnArgs, U, FnErr> {
+    const newFn = (...args: FnArgs) => this.fn(...args).map(f)
     return resultFn(newFn, this.argsList)
   }
 
@@ -159,8 +158,8 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
    * Transforms the error value of the ResultCallable when executed.
    * The transformation only occurs if the Result is Err.
    */
-  mapErr<E2>(f: (error: FnErr) => E2): ResultCallable<Args, FnRes, E2> {
-    const newFn = (...args: Args) => this.fn(...args).mapErr(f)
+  mapErr<E2>(f: (error: FnErr) => E2): ResultCallable<FnArgs, FnRes, E2> {
+    const newFn = (...args: FnArgs) => this.fn(...args).mapErr(f)
     return resultFn(newFn, this.argsList)
   }
 
@@ -169,8 +168,8 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
    * Chains another Result-producing operation after this one.
    * Allows chaining operations that can fail.
    */
-  andThen<U, E2>(f: (value: FnRes) => Result<U, E2>): ResultCallable<Args, U, FnErr | E2> {
-    const newFn = (...args: Args) => this.fn(...args).andThen(f)
+  andThen<U, E2>(f: (value: FnRes) => Result<U, E2>): ResultCallable<FnArgs, U, FnErr | E2> {
+    const newFn = (...args: FnArgs) => this.fn(...args).andThen(f)
     return resultFn(newFn, this.argsList)
   }
 
@@ -179,8 +178,8 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
    * Executes the composed function with the given arguments.
    * All lazy evaluation and argument processing happens here.
    */
-  _execute(...args: Args): Result<FnRes, FnErr> {
-    const allArgs = [...this.argsList, ...args]
+  _execute(...args: FnArgs): Result<FnRes, FnErr> {
+    const allArgs = [...this.argsList, ...args] as [...ArgsList, ...FnArgs]
     return this.processArgsAndExecute(allArgs)
   }
 }
@@ -201,10 +200,10 @@ class _ResultCallable<Args extends unknown[], FnRes, FnErr = never> {
  * - Callable like a function (for direct execution)
  * - Have methods like applyArg, map, etc. (for composition)
  */
-export function resultFn<Args extends unknown[], R, E = never>(
+export function resultFn<Args extends unknown[], R, E = never, ArgsE = never>(
   fn: (...args: Args) => R | Result<R, E>,
-  argsList: ArgumentInput<unknown>[] = [],
-): ResultCallable<Args, R, E> {
+  argsList: ArgumentInput<unknown, ArgsE>[] = [],
+): ResultCallable<Args, R, E | ArgsE> {
   // Wrap the function to ensure it always returns a Result
   const wrappedFn = (...args: Args): Result<R, E> => {
     try {

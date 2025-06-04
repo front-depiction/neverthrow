@@ -1,4 +1,4 @@
-import { errAsync, okAsync, ResultAsync } from './result-async'
+import { errAsync, ResultAsync } from './result-async'
 import { createNeverThrowError, ErrorConfig } from './_internals/error'
 import { ErrOf, OkOf } from './_internals/types'
 

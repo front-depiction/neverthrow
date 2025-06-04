@@ -1,7 +1,11 @@
 
+import { ResultAsync } from './result-async'
 import { Ok, Err, SerializedResult, Result as ResultType } from './result'
 import { resultFn, ResultCallable } from './result-function'
 
+
+
+type MaybeAsyncResult<T, E> = ResultType<T, E> | ResultAsync<T, E>
 /**
  * Short circuits on the FIRST Err value that we find
  */
@@ -13,6 +17,12 @@ function combineResultList<T, E>(list: readonly ResultType<T, E>[]): ResultType<
     out.push(r.value)
   }
   return ok(out)
+}
+
+export const combineResultAsyncList = <T, E>(
+  asyncResultList: readonly ResultAsync<T, E>[],
+): ResultAsync<readonly T[], E> => {
+  return ResultAsync.fromSafePromise(Promise.all(asyncResultList)).andThen(combineResultList)
 }
 
 /**
@@ -34,6 +44,12 @@ function combineResultListWithAllErrors<T, E>(
 
   return errs.length > 0 ? err(errs) : ok(oks)
 }
+
+export const combineResultAsyncListWithAllErrors = <T, E>(
+  asyncResultList: readonly ResultAsync<T, E>[],
+): ResultAsync<readonly T[], E[]> =>
+  ResultAsync.fromSafePromise(Promise.all(asyncResultList)).andThen(combineResultListWithAllErrors)
+
 
 /**
  * Creates an Ok Result with the given value
@@ -89,51 +105,63 @@ export function fromThrowable<T, E, Args extends unknown[]>(
   return (resultFn(fn).mapErr(errorFn) as unknown) as ResultCallable<Args, T, E>
 }
 
+
+
 /** Recursive type to extract only value types, using Head/Tail pattern */
 type CombineValues<T> = T extends []
   ? []
   : T extends readonly [infer H, ...infer Rest]
-  ? H extends ResultType<infer V, infer _E>
+  ? H extends MaybeAsyncResult<infer V, infer _E>
+    ? [V, ...CombineValues<Rest>]
+    : H extends ResultAsync<infer V, infer _E>
     ? [V, ...CombineValues<Rest>]
     : never
   : never
 
-/** Recursive type to extract only error types, using Head/Tail pattern */
-type CombineSingleErrors<T> = T extends []
+/** Recursive type to extract only error types for sync Results */
+type CombineErrors<T> = T extends []
   ? never
   : T extends readonly [infer H, ...infer Rest]
-  ? H extends ResultType<infer _V, infer E>
+  ? H extends MaybeAsyncResult<infer _V, infer E>
     ? unknown extends E
-      ? CombineSingleErrors<Rest>
-      : E | CombineSingleErrors<Rest>
+      ? CombineErrors<Rest>
+      : E | CombineErrors<Rest>
     : never
   : never
-
-/** Updated CombineResults using the recursive types */
-export type CombineSingleResults<T> = T extends []
-  ? ResultType<never, never>
-  : ResultType<CombineValues<T>, CombineSingleErrors<T>>
-
-// eslint-disable-next-line prettier/prettier
-export function combine<T, E, const L extends readonly [...ResultType<T, E>[]]>(
-  resultList: L,
-): CombineSingleResults<L> {
-  return combineResultList(resultList) as CombineSingleResults<L>
-}
-
-export type CombineMultipleResults<T> = T extends []
-  ? ResultType<never, never>
-  : ResultType<CombineValues<T>, CombineMultipleErrors<T>>
 
 type CombineMultipleErrors<T> = T extends []
   ? []
   : T extends readonly [infer H, ...infer Rest]
-  ? H extends ResultType<unknown, infer E>
+  ? H extends MaybeAsyncResult<unknown, infer E>
     ? unknown extends E
       ? CombineMultipleErrors<Rest>
       : [E, ...CombineMultipleErrors<Rest>]
     : never
   : never
+
+
+/** Type for sync combine results */
+export type CombineSyncResults<T, CE = CombineErrors<T>> = T extends []
+  ? ResultType<never, never>
+  : ResultType<CombineValues<T>, CE>
+
+/** Type for async combine results */
+export type CombineAsyncResults<T, CE = CombineErrors<T>> = T extends []
+  ? ResultAsync<never, never>
+  : ResultAsync<CombineValues<T>, CE>
+
+
+
+// =============================================================================
+// PUBLIC SYNC COMBINE API
+// =============================================================================
+
+// eslint-disable-next-line prettier/prettier
+export function combine<T, E, const L extends readonly [...ResultType<T, E>[]]>(
+  resultList: L,
+): CombineSyncResults<L> {
+  return combineResultList(resultList) as CombineSyncResults<L>
+}
 
 /**
  * Combines multiple Results into a single Result, collecting all errors
@@ -142,9 +170,33 @@ type CombineMultipleErrors<T> = T extends []
  */
 export function combineWithAllErrors<T, const L extends readonly [...ResultType<T, unknown>[]]>(
   resultList: L,
-): CombineMultipleResults<L> {
-  return combineResultListWithAllErrors(resultList) as CombineMultipleResults<L>
+): CombineSyncResults<L, CombineMultipleErrors<L>> {
+  return combineResultListWithAllErrors(resultList) as CombineSyncResults<L, CombineMultipleErrors<L>>
 }
+
+// =============================================================================
+// PUBLIC ASYNC COMBINE API
+// =============================================================================
+
+export function combineAsync<T, const L extends readonly [...ResultAsync<T, unknown>[]]>(
+  asyncResultList: L,
+): CombineAsyncResults<L> {
+  return combineResultAsyncList(asyncResultList) as CombineAsyncResults<L>
+}
+
+export function combineAsyncWithAllErrors<T, const L extends readonly [...ResultAsync<T, unknown>[]]>(
+  asyncResultList: L,
+): CombineAsyncResults<L, CombineMultipleErrors<L>> {
+  return combineResultAsyncListWithAllErrors(asyncResultList) as CombineAsyncResults<L, CombineMultipleErrors<L>>
+}
+
+
+// =============================================================================
+// MULTIPLE ERRORS TYPE DEFINITIONS (for combineWithAllErrors)
+// =============================================================================
+
+
+
 
 // =============================================================================
 // LIFT FUNCTION - Simple function lifting into Result world
