@@ -1,217 +1,308 @@
-import { Err, Ok, Result } from './'
-import { combineResultAsyncList, combineResultAsyncListWithAllErrors } from './_internals/utils'
-import { ErrOf, ErrTuple, OkOf, OkTuple, SomeResult } from './_internals/types'
+import { ErrOf, ErrTuple, OkOf, OkTuple, SomeResult, UnknownError } from './_internals/types'
+import { Err, Ok, Result, SerializedResult } from './result'
+import { ErrorConfig } from './_internals/error'
+
+function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
+  return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
+}
 
 export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
-  private readonly _promise: PromiseLike<Result<T, E>>
+  constructor(private readonly promise: PromiseLike<Result<T, E>>) {}
 
-  constructor(promise: PromiseLike<Result<T, E>>) {
-    this._promise = promise
-  }
+  apply<U, V>(
+    this: ResultAsync<(arg: U) => V, E>,
+    arg: ResultAsync<U, E> | Result<U, E> | U,
+  ): ResultAsync<V, E> {
+    return new ResultAsync(
+      this.promise.then(async (fnResult) => {
+        if (fnResult.isErr()) return new Err<V, E>(fnResult.error)
 
-  static fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E> {
-    const newPromise = promise.then((value: T) => new Ok<T, E>(value))
-    return new ResultAsync(newPromise)
-  }
+        let argValue: U
+        if (arg instanceof ResultAsync) {
+          const argResult = await arg.promise
+          if (argResult.isErr()) return new Err<V, E>(argResult.error)
+          argValue = argResult.value
+        } else if (isResultLike(arg)) {
+          if (arg.isErr()) return new Err<V, E>(arg.error)
+          argValue = arg.value
+        } else {
+          argValue = arg
+        }
 
-  /**
-   * Wrap a promise-producing function into ResultAsync, mapping rejections via errorFn
-   */
-  static fromPromise<T, E>(
-    promise: PromiseLike<T>,
-    errorFn: (err: unknown) => E,
-  ): ResultAsync<T, E> {
-    const p = promise.then(
-      (value) => new Ok<T, E>(value),
-      (err) => new Err<T, E>(errorFn(err)),
+        try {
+          const result = fnResult.value(argValue)
+          return new Ok<V, E>(result)
+        } catch (error) {
+          return new Err<V, E>(error as E)
+        }
+      }),
     )
-    return new ResultAsync(p)
   }
 
-  static fromThrowable<A extends readonly any[], R, E>(
-    fn: (...args: A) => Promise<R>,
-    errorFn?: (err: unknown) => E,
-  ): (...args: A) => ResultAsync<R, E> {
-    return (...args) => {
-      try {
-        const p = fn(...args).then(
-          (v) => new Ok<R, never>(v),
-          (error) => new Err<never, E>(errorFn ? errorFn(error) : error),
-        )
-        return new ResultAsync(p)
-      } catch (error) {
-        const p = Promise.resolve(new Err<never, E>(errorFn ? errorFn(error) : error))
-        return new ResultAsync(p)
-      }
-    }
+  // ==================== CORE TRANSFORMATIONS ====================
+
+  map<U>(f: (t: T) => U | PromiseLike<U>): ResultAsync<U, E> {
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isErr()) return result as Err<never, E>
+        const mapped = await Promise.resolve(f(result.value))
+        return new Ok<U, E>(mapped)
+      }),
+    )
   }
 
-  /** First-error-wins combine */
-  static combine<
-    T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]] // literal, non-empty tuple
-  >(arr: [...T]): CombineResultsAsync<T>
-
-  static combine<
-    A extends readonly ResultAsync<unknown, unknown>[] // any array
-  >(arr: A): CombineResultsAsync<A>
-
-  /* single runtime implementation shared by both overloads */
-  static combine(arr: readonly ResultAsync<unknown, unknown>[]): ResultAsync<unknown, unknown> {
-    return combineResultAsyncList(arr) // existing JS helper
+  mapErr<F>(f: (e: E) => F | PromiseLike<F>): ResultAsync<T, F> {
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isOk()) return result as Ok<T, never>
+        const mapped = await Promise.resolve(f(result.error))
+        return new Err<T, F>(mapped)
+      }),
+    )
   }
 
-  /** Collect-all-errors combine */
-  static combineWithAllErrors<
-    T extends readonly [ResultAsync<unknown, unknown>, ...ResultAsync<unknown, unknown>[]]
-  >(arr: [...T]): CombineResultsAsyncWithAllErrorsArray<T>
-
-  static combineWithAllErrors<A extends readonly ResultAsync<unknown, unknown>[]>(
-    arr: A,
-  ): CombineResultsAsyncWithAllErrorsArray<A>
-
-  static combineWithAllErrors(
-    arr: readonly ResultAsync<unknown, unknown>[],
-  ): ResultAsync<unknown, unknown> {
-    return combineResultAsyncListWithAllErrors(arr)
-  }
-
-  /** Map the Ok value, preserving or mapping Promise returns */
-  map<U>(f: (t: T) => U | Promise<U>): ResultAsync<U, E> {
-    const p = this._promise.then(async (res) => {
-      return res.isErr()
-        ? (res as Err<never, E>)
-        : Promise.resolve(f(res.value)).then((v) => new Ok<U, never>(v))
-    })
-    return new ResultAsync(p)
-  }
-
-  /** Map the Err value, preserving or mapping Promise returns */
-  mapErr<F>(f: (e: E) => F | Promise<F>): ResultAsync<T, F> {
-    const p = this._promise.then(async (res) => {
-      return res.isOk()
-        ? (res as Ok<T, never>)
-        : Promise.resolve(f(res.error)).then((v) => new Err<never, F>(v))
-    })
-    return new ResultAsync(p)
-  }
-
-  /** caller wants full inference of both Ok & Err via OkOf/ErrOf */
   andThen<R extends SomeResult<unknown, unknown>>(
     f: (t: T) => R,
   ): ResultAsync<OkOf<R>, E | ErrOf<R>>
-  /** caller knows their output shape U,F exactly */
   andThen<U, F>(f: (t: T) => Result<U, F> | ResultAsync<U, F>): ResultAsync<U, E | F>
-  /** implementation must accept the union of both overloads */
   andThen(f: (t: T) => SomeResult<unknown, unknown>): ResultAsync<unknown, unknown> {
-    const p = this._promise.then((res) => (res.isErr() ? res : f(res.value)))
-    return new ResultAsync<unknown, unknown>(p)
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isErr()) return result
+        const next = f(result.value)
+        return (await next) as Result<unknown, unknown>
+      }),
+    )
   }
 
-  /** full inference of Err via ErrOf<R> */
+  // ==================== PURE DELEGATION (Zero Logic Duplication) ====================
+
+  andPush<R extends Result<unknown, unknown>, U extends T extends readonly unknown[] ? T : [T]>(
+    f: (t: T) => R | ResultAsync<OkOf<R>, ErrOf<R>>,
+  ): ResultAsync<[...U, OkOf<R>], ErrOf<R> | E> {
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isErr()) return result as Err<[...U, OkOf<R>], ErrOf<R> | E>
+        const next = f(result.value)
+        const nextResult = (await next) as Result<OkOf<R>, ErrOf<R>>
+        return result.andPush(() => nextResult)
+      }),
+    )
+  }
+
+  andPop<
+    NewT,
+    NewE,
+    Last,
+    R extends SomeResult<NewT, NewE>,
+    Arr extends readonly [...unknown[], Last]
+  >(this: ResultAsync<Arr, E>, f: (t: Last) => R): ResultAsync<NewT, NewE | E> {
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isErr()) return result as Err<never, E>
+        const [last] = result.value.slice(-1) as [Last]
+        return (await f(last)) as Result<NewT, NewE | E>
+      }),
+    )
+  }
+
+  andTee(f: (t: T) => unknown | PromiseLike<unknown>): ResultAsync<T, E> {
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isErr()) return result
+        try {
+          await Promise.resolve(f(result.value))
+        } catch {
+          // Ignore errors in tee operations
+        }
+        return result
+      }),
+    )
+  }
+
+  orTee(f: (e: E) => unknown | PromiseLike<unknown>): ResultAsync<T, E> {
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isOk()) return result
+        try {
+          await Promise.resolve(f(result.error))
+        } catch {
+          // Ignore errors in tee operations
+        }
+        return result
+      }),
+    )
+  }
+
   andThrough<R extends SomeResult<unknown, unknown>>(f: (t: T) => R): ResultAsync<T, E | ErrOf<R>>
-  /** caller knows their error type F exactly */
   andThrough<F>(f: (t: T) => Result<unknown, F> | ResultAsync<unknown, F>): ResultAsync<T, E | F>
-  /** broad implementation */
   andThrough(f: (t: T) => SomeResult<unknown, unknown>): ResultAsync<T, unknown> {
-    const p = this._promise.then((res) => {
-      if (res.isErr()) return res
-      const nr = f(res.value)
-      return nr.match(
-        () => res,
-        () => nr as Err<never, unknown>,
-      )
-    })
-    return new ResultAsync<T, unknown>(p)
-  }
-
-  /** Perform a side-effect on Ok without altering the result */
-  andTee(f: (t: T) => unknown | Promise<unknown>): ResultAsync<T, E> {
-    const p = this._promise.then(async (res) => {
-      // if the promise fails return the failure directly
-      if (res.isErr()) return res
-
-      try {
-        return Promise.resolve(f(res.value)).then(
-          () => res,
-          () => res,
-        )
-      } catch {
-        // protects against sync throw
-        return res
-      }
-    })
-
-    return new ResultAsync(p)
-  }
-
-  /** Perform a side-effect on Err without altering the result */
-  orTee(f: (e: E) => unknown | Promise<unknown>): ResultAsync<T, E> {
-    const p = this._promise.then(async (res) => {
-      // if the promise is successful return the sucess directly
-      if (res.isOk()) return res
-
-      try {
-        return Promise.resolve(f(res.error)).then(
-          () => res,
-          () => res,
-        )
-      } catch {
-        // protects against sync throw
-        return res
-      }
-    })
-
-    return new ResultAsync(p)
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isErr()) return result
+        const newResult = await f(result.value)
+        return newResult.isOk() ? result : (newResult as Result<never, unknown>)
+      }),
+    )
   }
 
   orElse<R extends SomeResult<unknown, unknown>>(f: (e: E) => R): ResultAsync<OkOf<R> | T, ErrOf<R>>
   orElse<U, F>(f: (e: E) => SomeResult<U, F>): ResultAsync<T | U, F>
-  /** Fallback on Err, potentially recovering to Ok */
   orElse(f: (e: E) => SomeResult<unknown, unknown>): ResultAsync<T | unknown, unknown> {
-    const p = this._promise.then(async (res) => {
-      // if the promise is successful return the sucess directly
-      if (res.isOk()) return res
-      //run the side effect and return the original promise's error no matter what
-      return f(res.error)
+    return new ResultAsync(
+      this.promise.then(async (result) => {
+        if (result.isOk()) return result
+        const fallback = f(result.error)
+        return (await fallback) as Result<T | unknown, unknown>
+      }),
+    )
+  }
+
+  // ==================== UNWRAPPING & MATCHING ====================
+
+  unwrapOr<A>(v: A): PromiseLike<T | A> {
+    return this.promise.then((result) => result.unwrapOr(v))
+  }
+
+  match<A, B = A>(
+    okFn: (t: T) => A | PromiseLike<A>,
+    errFn: (e: E) => B | PromiseLike<B>,
+  ): PromiseLike<A | B> {
+    return this.promise.then(async (result) => {
+      if (result.isOk()) {
+        return await Promise.resolve(okFn(result.value))
+      } else {
+        return await Promise.resolve(errFn(result.error))
+      }
+    })
+  }
+
+  _unsafeUnwrap(config?: ErrorConfig): PromiseLike<T> {
+    return this.promise.then((result) => result._unsafeUnwrap(config))
+  }
+
+  _unsafeUnwrapErr(config?: ErrorConfig): PromiseLike<E> {
+    return this.promise.then((result) => result._unsafeUnwrapErr(config))
+  }
+
+  // ==================== SERIALIZATION ====================
+
+  toJSON(): PromiseLike<SerializedResult<T, E>> {
+    return this.promise.then((result) => result.toJSON())
+  }
+
+  serialize(): PromiseLike<string> {
+    return this.promise.then((result) => result.serialize())
+  }
+
+  // ==================== NULLABLE BRIDGE ====================
+
+  toNullable(): PromiseLike<T | null> {
+    return this.promise.then((result) => (result.isOk() ? result.value : null))
+  }
+
+  toUndefined(): PromiseLike<T | undefined> {
+    return this.promise.then((result) => (result.isOk() ? result.value : undefined))
+  }
+
+  // ==================== ASYNC-SPECIFIC EXTENSIONS ====================
+
+  retry(times: number, delayFn?: (attempt: number) => number): ResultAsync<T, E> {
+    const attempt = async (remainingAttempts: number): Promise<Result<T, E>> => {
+      const result = await this.promise
+      if (result.isOk() || remainingAttempts <= 0) return result
+
+      if (delayFn) {
+        const delay = delayFn(times - remainingAttempts + 1)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+
+      return attempt(remainingAttempts - 1)
+    }
+
+    return new ResultAsync(attempt(times))
+  }
+
+  timeout(ms: number, errorFactory?: () => E): ResultAsync<T, E> {
+    const timeoutPromise = new Promise<Result<T, E>>((resolve) => {
+      setTimeout(() => {
+        const error = errorFactory ? errorFactory() : (('Timeout' as unknown) as E)
+        resolve(new Err<T, E>(error))
+      }, ms)
     })
 
-    return new ResultAsync(p)
+    return new ResultAsync(Promise.race([this.promise, timeoutPromise]))
   }
 
-  /** Unwrap to a Promise, running one of two callbacks */
-  match<U, V>(ok: (t: T) => U, err: (e: E) => V): PromiseLike<U | V> {
-    return this._promise.then((res) => res.match(ok, err))
-  }
+  // ==================== PROMISELIKE IMPLEMENTATION ====================
 
-  unwrapOr(def: T): PromiseLike<T> {
-    return this._promise.then((res) => res.unwrapOr(def))
-  }
-
-  // Implement PromiseLike
   then<A, B>(
     onFulfilled?: (res: Result<T, E>) => A | PromiseLike<A>,
-    onRejected?: (reason: any) => B | PromiseLike<B>,
+    onRejected?: (reason: unknown) => B | PromiseLike<B>,
   ): PromiseLike<A | B> {
-    return this._promise.then(onFulfilled, onRejected)
+    return this.promise.then(onFulfilled, onRejected)
+  }
+
+  static fromSafePromise<T, E = never>(promise: PromiseLike<T>): ResultAsync<T, E> {
+    return new ResultAsync(promise.then((value) => new Ok<T, E>(value)))
+  }
+
+  static fromPromise<T, E = UnknownError>(
+    promise: PromiseLike<T>,
+    errorFn: (error: unknown) => E = (error: unknown) =>
+      new UnknownError('Encountered an unknown error in ResultAsync.fromPromise', {
+        cause: error,
+      }) as E,
+  ): ResultAsync<T, E> {
+    return new ResultAsync(
+      promise.then(
+        (value) => new Ok<T, E>(value),
+        (error) => new Err<T, E>(errorFn(error)),
+      ),
+    )
+  }
+
+  static fromThrowable<T, E = UnknownError, Args extends unknown[] = unknown[]>(
+    fn: (...args: Args) => PromiseLike<T>,
+    errorFn: (error: unknown) => E = (error: unknown) =>
+      new UnknownError('Encountered an unknown error in ResultAsync.fromThrowable', {
+        cause: error,
+      }) as E,
+  ): (...args: Args) => ResultAsync<T, E> {
+    return (...args: Args) => {
+      try {
+        return new ResultAsync(
+          fn(...args).then(
+            (value) => new Ok<T, E>(value),
+            (error) => new Err<T, E>(errorFn(error)),
+          ),
+        )
+      } catch (error) {
+        return errAsync<T, E>(errorFn(error))
+      }
+    }
   }
 }
 
-/** Shortcut constructors */
+export const fromSafePromise = ResultAsync.fromSafePromise
+export const fromPromise = ResultAsync.fromPromise
+export const fromThrowable = ResultAsync.fromThrowable
+// ==================== SHORTCUT CONSTRUCTORS ====================
+
 export function okAsync<T, E = never>(value: T): ResultAsync<T, E> {
   return new ResultAsync(Promise.resolve(new Ok<T, E>(value)))
 }
+
 export function errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
   return new ResultAsync(Promise.resolve(new Err<T, E>(error)))
 }
 
-export const fromSafePromise = ResultAsync.fromPromise
-export const fromAsyncThrowable = ResultAsync.fromPromise
+// ==================== TYPE DEFINITIONS ====================
 
 export type CombineResultsAsync<T extends readonly ResultAsync<unknown, unknown>[]> = T extends []
-  ? ResultAsync<never, never> //     ⟶ Ok<never, never>
+  ? ResultAsync<never, never>
   : ResultAsync<OkTuple<T>, ErrTuple<T>[number]>
 
-/** Collect-all-errors combine (handles the empty list case) */
 export type CombineResultsAsyncWithAllErrorsArray<
   T extends readonly ResultAsync<unknown, unknown>[]
 > = T extends [] ? ResultAsync<never, never> : ResultAsync<OkTuple<T>, ErrTuple<T>[number][]>

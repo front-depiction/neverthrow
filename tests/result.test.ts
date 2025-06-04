@@ -12,6 +12,7 @@ describe('Result.Ok', () => {
   it('Creates an Ok value', () => {
     const okVal = ok(12)
 
+
     expect(okVal.isOk()).toBe(true)
     expect(okVal.isErr()).toBe(false)
     expect(okVal.isOk()).toBe(true)
@@ -677,56 +678,6 @@ describe('Utils', () => {
       })
     })
 
-    describe('`ResultAsync.combine`', () => {
-      it('Combines a list of async results into an Ok value', async () => {
-        const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
-
-        const resultAsync: ResultAsync<number[], never[]> = ResultAsync.combine(asyncResultList)
-
-        expect(resultAsync).toBeInstanceOf(ResultAsync)
-
-        const result = await ResultAsync.combine(asyncResultList)
-
-        expect(result.isOk()).toBe(true)
-        expect(result._unsafeUnwrap()).toEqual([123, 456, 789])
-      })
-
-      it('Combines a list of results into an Err value', async () => {
-        const resultList: ResultAsync<number, string>[] = [
-          okAsync(123),
-          errAsync('boooom!'),
-          okAsync(456),
-          errAsync('ahhhhh!'),
-        ]
-
-        const result = await ResultAsync.combine(resultList)
-
-        expect(result.isErr()).toBe(true)
-        expect(result._unsafeUnwrapErr()).toBe('boooom!')
-      })
-
-      it('Combines heterogeneous lists', async () => {
-        type HeterogenousList = [
-          ResultAsync<string, string>,
-          ResultAsync<number, number>,
-          ResultAsync<boolean, boolean>,
-          ResultAsync<number[], string>,
-        ]
-
-        const heterogenousList: HeterogenousList = [
-          okAsync('Yooooo'),
-          okAsync(123),
-          okAsync(true),
-          okAsync([1, 2, 3]),
-        ]
-
-        type ExpecteResult = Result<[string, number, boolean, number[]], string | number | boolean>
-
-        const result: ExpecteResult = await ResultAsync.combine(heterogenousList)
-
-        expect(result._unsafeUnwrap()).toEqual(['Yooooo', 123, true, [1, 2, 3]])
-      })
-    })
   })
   describe('`Result.combineWithAllErrors`', () => {
     describe('Synchronous `combineWithAllErrors`', () => {
@@ -782,67 +733,6 @@ describe('Utils', () => {
           ['hello', 'world'],
           [1, 2, 3],
         ])
-      })
-    })
-    describe('`ResultAsync.combineWithAllErrors`', () => {
-      it('Combines a list of async results into an Ok value', async () => {
-        const asyncResultList = [okAsync(123), okAsync(456), okAsync(789)]
-
-        const result = await ResultAsync.combineWithAllErrors(asyncResultList)
-
-        expect(result.isOk()).toBe(true)
-        expect(result._unsafeUnwrap()).toEqual([123, 456, 789])
-      })
-
-      it('Combines a list of results into an Err value', async () => {
-        const asyncResultList: ResultAsync<number, string>[] = [
-          okAsync(123),
-          errAsync('boooom!'),
-          okAsync(456),
-          errAsync('ahhhhh!'),
-        ]
-
-        const result = await ResultAsync.combineWithAllErrors(asyncResultList)
-
-        expect(result.isErr()).toBe(true)
-        expect(result._unsafeUnwrapErr()).toEqual(['boooom!', 'ahhhhh!'])
-      })
-
-      it('Combines heterogeneous lists', async () => {
-        type HeterogenousList = [
-          ResultAsync<string, string>,
-          ResultAsync<number, number>,
-          ResultAsync<boolean, boolean>,
-        ]
-
-        const heterogenousList: HeterogenousList = [okAsync('Yooooo'), okAsync(123), okAsync(true)]
-
-        type ExpecteResult = Result<[string, number, boolean], (string | number | boolean)[]>
-
-        const result: ExpecteResult = await ResultAsync.combineWithAllErrors(heterogenousList)
-
-        expect(result._unsafeUnwrap()).toEqual(['Yooooo', 123, true])
-      })
-    })
-
-    describe('testdouble `ResultAsync.combine`', () => {
-      interface ITestInterface {
-        getName(): string
-        setName(name: string): void
-        getAsyncResult(): ResultAsync<ITestInterface, Error>
-      }
-
-      it('Combines `testdouble` proxies from mocks generated via interfaces', async () => {
-        const mock = td.object<ITestInterface>()
-
-        const result = await ResultAsync.combine([okAsync(mock)] as const)
-
-        expect(result).toBeDefined()
-        expect(result.isErr()).toBeFalsy()
-        const unwrappedResult = result._unsafeUnwrap()
-
-        expect(unwrappedResult.length).toBe(1)
-        expect(unwrappedResult[0]).toBe(mock)
       })
     })
   })

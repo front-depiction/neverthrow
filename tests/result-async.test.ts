@@ -12,6 +12,7 @@ import {
 } from '../src'
 
 import { vi, describe, expect, it, beforeEach } from 'vitest'
+import { UnknownError } from '../src/_internals/types'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -483,30 +484,36 @@ describe('ResultAsync', () => {
       expect(val._unsafeUnwrap()).toEqual(12)
     })
 
-    it('handles synchronous errors', async () => {
+    it('handles synchronous errors with no error handler', async () => {
       const example = ResultAsync.fromThrowable(() => {
         if (1 > 0) throw new Error('Oops: No!')
-
         return Promise.resolve(12)
       })
 
       const val = await example()
       expect(val.isErr()).toBe(true)
 
-      expect(val._unsafeUnwrapErr()).toEqual(Error('Oops: No!'))
+      expect(val._unsafeUnwrapErr()).toEqual(
+        new UnknownError('Encountered an unknown error in ResultAsync.fromThrowable', {
+          cause: new Error('Oops: No!'),
+        }),
+      )
     })
 
-    it('handles asynchronous errors', async () => {
+    it('handles asynchronous errors with no error handler', async () => {
       const example = ResultAsync.fromThrowable(async () => {
         if (1 > 0) throw new Error('Oops: No!')
-
         return 12
       })
 
       const val = await example()
       expect(val.isErr()).toBe(true)
 
-      expect(val._unsafeUnwrapErr()).toEqual(Error('Oops: No!'))
+      expect(val._unsafeUnwrapErr()).toEqual(
+        new UnknownError('Encountered an unknown error in ResultAsync.fromThrowable', {
+          cause: new Error('Oops: No!'),
+        }),
+      )
     })
 
     it('Accepts an error handler as a second argument', async () => {

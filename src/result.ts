@@ -1,4 +1,4 @@
-import { errAsync, ResultAsync } from './result-async'
+import { errAsync, okAsync, ResultAsync } from './result-async'
 import { createNeverThrowError, ErrorConfig } from './_internals/error'
 import { ErrOf, OkOf } from './_internals/types'
 
@@ -159,11 +159,9 @@ class BaseResult<T, E> {
   andThrough(f: (t: T) => Result<unknown, unknown>): Result<T, unknown> {
     if (this.isOk()) {
       const result = f(this.data.value!)
-      return result.isOk()
-        ? new Ok<T, unknown>(this.data.value!)
-        : new Err<T, unknown>(result.data.error!)
+      return result.isOk() ? this : new Err<T, unknown>(result.data.error!)
     }
-    return new Err<T, unknown>(this.data.error!)
+    return (this as unknown) as Result<T, unknown>
   }
 
   orElse<R extends Result<unknown, unknown>>(f: (e: E) => R): Result<OkOf<R> | T, ErrOf<R>>
@@ -178,7 +176,7 @@ class BaseResult<T, E> {
 
   asyncMap<U>(f: (t: T) => Promise<U>): ResultAsync<U, E> {
     return this.isOk()
-      ? ResultAsync.fromSafePromise(f(this.data.value!))
+      ? ResultAsync.fromSafePromise(f(this.value))
       : errAsync<U, E>(this.data.error!)
   }
 
@@ -215,7 +213,7 @@ class BaseResult<T, E> {
   }
 
   _unsafeUnwrapErr(config?: ErrorConfig): E {
-    if (this.isErr()) return this.data.error!
+    if (this.isErr()) return this.error
     throw createNeverThrowError(
       'Called `_unsafeUnwrapErr` on an Ok',
       (this as unknown) as Ok<T, E>,

@@ -31,3 +31,11 @@ export type OkTuple<T extends readonly SomeResult<unknown, unknown>[]> = {
 export type ErrTuple<T extends readonly SomeResult<unknown, unknown>[]> = {
   [K in keyof T]: ErrOf<T[K]>
 }
+
+//Unknown error class
+export class UnknownError extends Error {
+  constructor(...args: ConstructorParameters<typeof Error>) {
+    super(...args)
+    this.name = 'UnknownError'
+  }
+}

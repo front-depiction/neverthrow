@@ -4,7 +4,14 @@ export { Ok, Err } from './result'
 import * as ResultUtils from './result-utils'
 
 export { safeTry } from './safe-try'
-export { ResultAsync, okAsync, errAsync, fromAsyncThrowable, fromSafePromise } from './result-async'
+export {
+  ResultAsync,
+  okAsync,
+  errAsync,
+  fromThrowable as fromAsyncThrowable,
+  fromSafePromise,
+  fromPromise,
+} from './result-async'
 
 export type Result<T, E> = ResultType<T, E>
 // eslint-disable-next-line @typescript-eslint/no-namespace
