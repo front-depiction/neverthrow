@@ -1,6 +1,7 @@
 import { errAsync, ResultAsync } from './result-async'
 import { createNeverThrowError, ErrorConfig } from './_internals/error'
-import { ErrOf, OkOf } from './_internals/types'
+import { ErrOf, ErrTuple, OkOf, OkTuple } from './_internals/types'
+import { combineResultList } from '_internals/utils'
 
 // Discriminated union for Result data (internal only)
 export type ResultData<T, E> =
@@ -130,6 +131,12 @@ class BaseResult<T, E> {
     )
 
     return result.isOk() ? new Ok(result.data.value!) : new Err(result.data.error!)
+  }
+
+  combine<ResultArray extends readonly Result<unknown, unknown>[]>(
+    this: BaseResult<ResultArray, E>,
+  ): Result<OkTuple<ResultArray>, ErrTuple<ResultArray>[number] | E> {
+    return this.isErr() ? new Err(this.data.error!) : combineResultList(this.data.value!)
   }
 
   andTee(f: (t: T) => unknown): Result<T, E> {

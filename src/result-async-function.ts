@@ -53,7 +53,7 @@ function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
  * - PromiseLike<T>: A promise that resolves to a value
  * - () => T | Result<T, E> | ResultAsync<T, E> | PromiseLike<T>: Lazy functions
  */
-export type AsyncArgumentInput<T, E = unknown> =
+export type MaybeAsyncArgumentInput<T, E = unknown> =
   | ArgumentInput<T, E>
   | PromiseLike<T>
   | (() => PromiseLike<T>)
@@ -96,7 +96,7 @@ class _ResultAsyncCallable<
   Args extends unknown[],
   FnRes,
   FnErr = never,
-  ArgsList extends AsyncArgumentInput<unknown, unknown>[] = []
+  ArgsList extends MaybeAsyncArgumentInput<unknown, unknown>[] = []
 > {
   /**
    * constructor: ((...args: Args) => ResultAsync<FnRes, FnErr>) -> _ResultAsyncCallable
@@ -117,7 +117,7 @@ class _ResultAsyncCallable<
    * - If argument is a plain value, wrap it in okAsync()
    * - If any step throws, wrap the error in errAsync()
    */
-  private processArgument<T, E>(arg: AsyncArgumentInput<T, E>): ResultAsync<T, E> {
+  private processArgument<T, E>(arg: MaybeAsyncArgumentInput<T, E>): ResultAsync<T, E> {
     try {
       if (isFunction(arg)) {
         const result = (arg as () => T | Result<T, E> | ResultAsync<T, E> | PromiseLike<T>)()
@@ -176,11 +176,13 @@ class _ResultAsyncCallable<
    * Arguments are processed in parallel when the function is executed.
    */
   applyArg<ParamErr = never>(
-    arg: AsyncArgumentInput<Head<Args>, ParamErr>,
+    arg: MaybeAsyncArgumentInput<Head<Args>, ParamErr>,
   ): ResultAsyncCallable<Tail<Args>, FnRes, FnErr | ParamErr> {
     const newArgsList = [...this.argsList, arg]
     // We can cast because we control the arguments passed in during execution
-    const newFn = (this.fn as unknown) as (...args: Tail<Args>) => ResultAsync<FnRes, FnErr>
+    const newFn = (this.fn as unknown) as (
+      ...args: Tail<Args>
+    ) => ResultAsync<FnRes, FnErr | ParamErr>
     return resultFnAsync(newFn, newArgsList)
   }
 
@@ -247,7 +249,7 @@ class _ResultAsyncCallable<
  */
 export function resultFnAsync<Args extends unknown[], R, E = never, ArgsE = never>(
   fn: (...args: Args) => R | Result<R, E> | ResultAsync<R, E> | PromiseLike<R>,
-  argsList: AsyncArgumentInput<unknown, ArgsE>[] = [],
+  argsList: MaybeAsyncArgumentInput<unknown, ArgsE>[] = [],
 ): ResultAsyncCallable<Args, R, E | ArgsE> {
   // Wrap the function to ensure it always returns a ResultAsync
   const wrappedFn = (...args: Args): ResultAsync<R, E> => {

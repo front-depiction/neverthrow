@@ -9,6 +9,7 @@ import {
 } from '../src/result-utils'
 import { err, ok } from '../src/result-utils'
 import { Result, ResultAsync, okAsync, errAsync } from '../src'
+import { UnknownError } from '../src/_internals/types'
 
 // Type assertions for compile-time type checking
 type ExpectedResult<T, E = unknown> = Result<T, E>
@@ -143,7 +144,7 @@ describe('combine functions', () => {
     })
 
     it('should handle async errors correctly', async () => {
-      const asyncError = ResultAsync.fromSafePromise(Promise.reject(new Error('async error')))
+      const asyncError = ResultAsync.fromPromise(Promise.reject(new Error('async error')))
 
       const result = combineAsync([okAsync(1), asyncError, okAsync(3)])
       const value = await result
@@ -216,15 +217,20 @@ describe('combine functions', () => {
 
       const result = combineAsyncWithAllErrors([
         okAsync(1),
-        ResultAsync.fromSafePromise(delay(50, 'error1')),
-        ResultAsync.fromSafePromise(delay(50, 'error2')),
+        ResultAsync.fromPromise(delay(50, 'error1')),
+        ResultAsync.fromPromise(delay(50, 'error2')),
         okAsync(2),
       ])
 
       const value = await result
       const elapsed = Date.now() - start
-
-      expect(value).toEqual(err(['error1', 'error2']))
+      const expectedErr = ['error1', 'error2'].map(
+        (e) =>
+          new UnknownError('Encountered an unknown error in ResultAsync.fromPromise', {
+            cause: e,
+          }),
+      )
+      expect(value).toEqual(err(expectedErr))
       // Should take ~50ms (parallel) not ~100ms (sequential)
       expect(elapsed).toBeLessThan(100)
     })

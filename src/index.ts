@@ -15,7 +15,10 @@ export {
 
 export { resultFnAsync, fromAsync } from './result-async-function'
 
-export type { ResultAsyncCallable, AsyncArgumentInput } from './result-async-function'
+export type {
+  ResultAsyncCallable,
+  MaybeAsyncArgumentInput as AsyncArgumentInput,
+} from './result-async-function'
 
 export type Result<T, E> = ResultType<T, E>
 // eslint-disable-next-line @typescript-eslint/no-namespace
