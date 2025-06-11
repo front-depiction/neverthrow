@@ -1,6 +1,6 @@
-import { ErrOf, ErrTuple, OkOf, OkTuple, SomeResult, UnknownError } from './_internals/types'
+import { ErrOf, OkOf, SomeResult } from '../_internals/types'
+import { ErrorConfig, UnknownError } from '../_internals/error'
 import { Err, Ok, Result, SerializedResult } from './result'
-import { ErrorConfig } from './_internals/error'
 
 function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
   return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
@@ -261,48 +261,7 @@ export class ResultAsync<T, E> implements PromiseLike<Result<T, E>> {
       ),
     )
   }
-
-  static fromThrowable<T, E = UnknownError, Args extends unknown[] = unknown[]>(
-    fn: (...args: Args) => PromiseLike<T>,
-    errorFn: (error: unknown) => E = (error: unknown) =>
-      new UnknownError('Encountered an unknown error in ResultAsync.fromThrowable', {
-        cause: error,
-      }) as E,
-  ): (...args: Args) => ResultAsync<T, E> {
-    return (...args: Args) => {
-      try {
-        return new ResultAsync(
-          fn(...args).then(
-            (value) => new Ok<T, E>(value),
-            (error) => new Err<T, E>(errorFn(error)),
-          ),
-        )
-      } catch (error) {
-        return errAsync<T, E>(errorFn(error))
-      }
-    }
-  }
 }
 
 export const fromSafePromise = ResultAsync.fromSafePromise
 export const fromPromise = ResultAsync.fromPromise
-export const fromThrowable = ResultAsync.fromThrowable
-// ==================== SHORTCUT CONSTRUCTORS ====================
-
-export function okAsync<T, E = never>(value: T): ResultAsync<T, E> {
-  return new ResultAsync(Promise.resolve(new Ok<T, E>(value)))
-}
-
-export function errAsync<T = never, E = unknown>(error: E): ResultAsync<T, E> {
-  return new ResultAsync(Promise.resolve(new Err<T, E>(error)))
-}
-
-// ==================== TYPE DEFINITIONS ====================
-
-export type CombineResultsAsync<T extends readonly ResultAsync<unknown, unknown>[]> = T extends []
-  ? ResultAsync<never, never>
-  : ResultAsync<OkTuple<T>, ErrTuple<T>[number]>
-
-export type CombineResultsAsyncWithAllErrorsArray<
-  T extends readonly ResultAsync<unknown, unknown>[]
-> = T extends [] ? ResultAsync<never, never> : ResultAsync<OkTuple<T>, ErrTuple<T>[number][]>

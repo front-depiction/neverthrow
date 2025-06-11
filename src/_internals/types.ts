@@ -1,5 +1,5 @@
-import type { Result } from '../result'
-import { ResultAsync } from '../result-async'
+import type { Result } from '../core/result'
+import type { ResultAsync } from '../core/result-async'
 
 export type SomeResult<T, E> = Result<T, E> | ResultAsync<T, E>
 /**
@@ -30,12 +30,4 @@ export type OkTuple<T extends readonly SomeResult<unknown, unknown>[]> = {
 /** Map a tuple / readonly array of Results or ResultAsyncs to their Err sides. */
 export type ErrTuple<T extends readonly SomeResult<unknown, unknown>[]> = {
   [K in keyof T]: ErrOf<T[K]>
-}
-
-//Unknown error class
-export class UnknownError extends Error {
-  constructor(...args: ConstructorParameters<typeof Error>) {
-    super(...args)
-    this.name = 'UnknownError'
-  }
 }

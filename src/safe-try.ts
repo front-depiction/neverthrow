@@ -1,8 +1,7 @@
-import { Ok, Err } from './result'
-import { ResultAsync } from './result-async'
-import { ErrOf, OkOf } from './_internals/types'
-import { Result } from './result'
-
+import type { ErrOf, OkOf } from '_internals/types'
+import { ok, err } from 'constructors/creators'
+import type { Result } from 'core/result'
+import { ResultAsync } from 'core/result-async'
 /**
  * Evaluates the given generator to a Result returned or an Err yielded from it,
  * whichever comes first.
@@ -34,5 +33,5 @@ export function safeTry<T, E>(
     return new ResultAsync(n.then((r) => r.value))
   }
   const result = n.value
-  return result.isOk() ? new Ok(result.data.value!) : new Err(result.data.error!)
+  return result.isOk() ? ok(result.data.value!) : err(result.data.error!)
 }

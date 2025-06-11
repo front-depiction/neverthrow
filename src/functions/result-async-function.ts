@@ -34,12 +34,53 @@
  *    - Composed: resultFnAsync(fn).applyArg(arg1).map(transform).andThen(chain)()
  */
 
-import { ArgumentInput } from './result-function'
-import { Result, ResultAsync, okAsync, errAsync } from '.'
-import { combineAsync } from './result-utils'
+import type { Result } from 'core/result'
+import type { ArgumentInput } from './result-function'
+import { errAsync, okAsync } from 'constructors/creators'
+import { ResultAsync } from 'core/result-async'
+import { combineAsync } from 'combinators/combine'
 
 type Tail<T extends unknown[]> = T extends [unknown, ...infer R] ? R : never
 type Head<T extends unknown[]> = T extends [infer H, ...unknown[]] ? H : never
+
+/**
+ * Core callable type that all ResultAsyncCallable implement
+ */
+type CallableAsync<Args extends unknown[], R, E> = (...args: Args) => ResultAsync<R, E>
+
+/**
+ * A ResultAsyncCallable that still needs arguments (has unfilled parameters)
+ * Combines the callable interface with the composition methods
+ */
+type UnfilledResultAsyncCallable<
+  Args extends [unknown, ...unknown[]],
+  R,
+  E = unknown
+> = CallableAsync<Args, R, E> & _ResultAsyncCallable<Args, R, E>
+
+/**
+ * A ResultAsyncCallable that has all arguments filled (no parameters needed)
+ * Can be called with no arguments, has composition methods but no applyArg
+ */
+type FilledResultAsyncCallable<R, E = unknown> = CallableAsync<[], R, E> &
+  Omit<_ResultAsyncCallable<[], R, E>, 'applyArg'>
+
+/**
+ * ResultAsyncCallable: The main exported type that represents a composable, ResultAsync-aware function
+ *
+ * Type-level Pattern Matching:
+ * - If Args extends [unknown, ...unknown[]] (has at least one arg): UnfilledResultAsyncCallable
+ * - Otherwise (no args needed): FilledResultAsyncCallable
+ *
+ * This ensures type safety at compile time - you can't call applyArg on a function that
+ * doesn't need any more arguments.
+ */
+export type ResultAsyncCallable<Args extends unknown[], R, E = never> = Args extends [
+  unknown,
+  ...unknown[]
+]
+  ? UnfilledResultAsyncCallable<Args, R, E>
+  : FilledResultAsyncCallable<R, E>
 
 function isResultLike<T, E>(value: T | Result<T, E>): value is Result<T, E> {
   return typeof value === 'object' && value !== null && 'isOk' in value && 'isErr' in value
@@ -288,52 +329,16 @@ export function resultFnAsync<Args extends unknown[], R, E = never, ArgsE = neve
   return proxyFn as ResultAsyncCallable<Args, R, E>
 }
 
+export function fromThrowable<T, E, Args extends unknown[]>(
+  fn: (...args: Args) => T,
+  errorFn: (e: unknown) => E = (e: unknown) => e as E,
+): ResultAsyncCallable<Args, T, E> {
+  return (resultFnAsync(fn).mapErr(errorFn) as unknown) as ResultAsyncCallable<Args, T, E>
+}
+
 /**
  * fromAsync: Alias for resultFnAsync
  * Provides a more descriptive name for creating ResultAsyncCallable from existing functions.
  * Use `resultFnAsync` when defining new functions, `fromAsync` when adapting existing functions.
  */
 export const fromAsync = resultFnAsync
-
-// =============================================================================
-// TYPE DEFINITIONS
-// =============================================================================
-
-/**
- * Core callable type that all ResultAsyncCallable implement
- */
-type CallableAsync<Args extends unknown[], R, E> = (...args: Args) => ResultAsync<R, E>
-
-/**
- * A ResultAsyncCallable that still needs arguments (has unfilled parameters)
- * Combines the callable interface with the composition methods
- */
-type UnfilledResultAsyncCallable<
-  Args extends [unknown, ...unknown[]],
-  R,
-  E = unknown
-> = CallableAsync<Args, R, E> & _ResultAsyncCallable<Args, R, E>
-
-/**
- * A ResultAsyncCallable that has all arguments filled (no parameters needed)
- * Can be called with no arguments, has composition methods but no applyArg
- */
-type FilledResultAsyncCallable<R, E = unknown> = CallableAsync<[], R, E> &
-  Omit<_ResultAsyncCallable<[], R, E>, 'applyArg'>
-
-/**
- * ResultAsyncCallable: The main exported type that represents a composable, ResultAsync-aware function
- *
- * Type-level Pattern Matching:
- * - If Args extends [unknown, ...unknown[]] (has at least one arg): UnfilledResultAsyncCallable
- * - Otherwise (no args needed): FilledResultAsyncCallable
- *
- * This ensures type safety at compile time - you can't call applyArg on a function that
- * doesn't need any more arguments.
- */
-export type ResultAsyncCallable<Args extends unknown[], R, E = never> = Args extends [
-  unknown,
-  ...unknown[]
-]
-  ? UnfilledResultAsyncCallable<Args, R, E>
-  : FilledResultAsyncCallable<R, E>

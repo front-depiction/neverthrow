@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ResultCallable, resultFn } from '../src/result-function'
-import { err, ok, Result } from '../src'
+import { err, ok, Result, ResultCallable, resultFn } from '../src'
 
 // Type assertions for compile-time type checking
 type ExpectedCallableNoArgs<T, E = never> = ResultCallable<[], T, E>

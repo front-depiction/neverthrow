@@ -1,15 +1,19 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
-  lift,
-  LiftedFunction,
   combine,
   combineAsync,
-  combineWithAllErrors,
   combineAsyncWithAllErrors,
-} from '../src/result-utils'
-import { err, ok } from '../src/result-utils'
-import { Result, ResultAsync, okAsync, errAsync } from '../src'
-import { UnknownError } from '../src/_internals/types'
+  combineWithAllErrors,
+  err,
+  errAsync,
+  lift,
+  LiftedFunction,
+  ok,
+  okAsync,
+  Result,
+  ResultAsync,
+  UnknownError,
+} from '../src'
 
 // Type assertions for compile-time type checking
 type ExpectedResult<T, E = unknown> = Result<T, E>

@@ -32,7 +32,8 @@
  *    - Composed: resultFn(fn).applyArg(arg1).map(transform).andThen(chain)()
  */
 
-import { Result, ok, err } from '.'
+import type { Result } from '../core/result'
+import { ok, err } from '../constructors/creators'
 
 type Tail<T extends unknown[]> = T extends [unknown, ...infer R] ? R : never
 type Head<T extends unknown[]> = T extends [infer H, ...unknown[]] ? H : never
@@ -44,6 +45,46 @@ type Head<T extends unknown[]> = T extends [infer H, ...unknown[]] ? H : never
  * - () => Result<T, E>: A function that lazily produces a Result
  */
 export type ArgumentInput<T, E = unknown> = T | (() => T) | Result<T, E> | (() => Result<T, E>)
+
+/**
+ * Core callable type that all ResultCallables implement
+ */
+type Callable<Args extends unknown[], R, E> = (...args: Args) => Result<R, E>
+
+/**
+ * A ResultCallable that still needs arguments (has unfilled parameters)
+ * Combines the callable interface with the composition methods
+ */
+type UnfilledResultCallable<Args extends [unknown, ...unknown[]], R, E = unknown> = Callable<
+  Args,
+  R,
+  E
+> &
+  _ResultCallable<Args, R, E>
+
+/**
+ * A ResultCallable that has all arguments filled (no parameters needed)
+ * Can be called with no arguments, has composition methods but no applyArg
+ */
+type FilledResultCallable<R, E = unknown> = Callable<[], R, E> &
+  Omit<_ResultCallable<[], R, E>, 'pushArgs'>
+
+/**
+ * ResultCallable: The main exported type that represents a composable, Result-aware function
+ *
+ * Type-level Pattern Matching:
+ * - If Args extends [unknown, ...unknown[]] (has at least one arg): UnfilledResultCallable
+ * - Otherwise (no args needed): FilledResultCallable
+ *
+ * This ensures type safety at compile time - you can't call applyArg on a function that
+ * doesn't need any more arguments.
+ */
+export type ResultCallable<Args extends unknown[], R, E = never> = Args extends [
+  unknown,
+  ...unknown[]
+]
+  ? UnfilledResultCallable<Args, R, E>
+  : FilledResultCallable<R, E>
 
 // =============================================================================
 // HELPER PREDICATES
@@ -231,52 +272,19 @@ export function resultFn<Args extends unknown[], R, E = never, ArgsE = never>(
 }
 
 /**
+ * Wraps a function with a try catch, creating a new function with the same
+ * arguments but returning `Ok` if successful, `Err` if the function throws
+ */
+export function fromThrowable<T, E, Args extends unknown[]>(
+  fn: (...args: Args) => T,
+  errorFn: (e: unknown) => E = (e: unknown) => e as E,
+): ResultCallable<Args, T, E> {
+  return (resultFn(fn).mapErr(errorFn) as unknown) as ResultCallable<Args, T, E>
+}
+
+/**
  * from: Alias for resultFn
  * Provides a more descriptive name for creating ResultCallables from existing functions.
  * Use `resultFn` when defining new functions, `from` when adapting existing functions.
  */
 export const from = resultFn
-
-// =============================================================================
-// TYPE DEFINITIONS
-// =============================================================================
-
-/**
- * Core callable type that all ResultCallables implement
- */
-type Callable<Args extends unknown[], R, E> = (...args: Args) => Result<R, E>
-
-/**
- * A ResultCallable that still needs arguments (has unfilled parameters)
- * Combines the callable interface with the composition methods
- */
-type UnfilledResultCallable<Args extends [unknown, ...unknown[]], R, E = unknown> = Callable<
-  Args,
-  R,
-  E
-> &
-  _ResultCallable<Args, R, E>
-
-/**
- * A ResultCallable that has all arguments filled (no parameters needed)
- * Can be called with no arguments, has composition methods but no applyArg
- */
-type FilledResultCallable<R, E = unknown> = Callable<[], R, E> &
-  Omit<_ResultCallable<[], R, E>, 'pushArgs'>
-
-/**
- * ResultCallable: The main exported type that represents a composable, Result-aware function
- *
- * Type-level Pattern Matching:
- * - If Args extends [unknown, ...unknown[]] (has at least one arg): UnfilledResultCallable
- * - Otherwise (no args needed): FilledResultCallable
- *
- * This ensures type safety at compile time - you can't call applyArg on a function that
- * doesn't need any more arguments.
- */
-export type ResultCallable<Args extends unknown[], R, E = never> = Args extends [
-  unknown,
-  ...unknown[]
-]
-  ? UnfilledResultCallable<Args, R, E>
-  : FilledResultCallable<R, E>

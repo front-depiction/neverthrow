@@ -1,6 +1,6 @@
-import { ok, err } from '../result-utils'
-import { ResultAsync } from '../result-async'
-import { Result } from '../result'
+import { err, ok } from 'constructors/creators'
+import type { Result } from 'core/result'
+import { ResultAsync } from 'core/result-async'
 
 /**
  * Short circuits on the FIRST Err value that we find

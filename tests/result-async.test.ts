@@ -1,6 +1,7 @@
+import { vi, describe, expect, it, beforeEach } from 'vitest'
 import {
-  err,
   Err,
+  err,
   errAsync,
   fromAsyncThrowable,
   fromPromise,
@@ -10,9 +11,7 @@ import {
   okAsync,
   ResultAsync,
 } from '../src'
-
-import { vi, describe, expect, it, beforeEach } from 'vitest'
-import { UnknownError } from '../src/_internals/types'
+import { UnknownError } from '../src/_internals/error'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -75,7 +74,7 @@ describe('ResultAsync', () => {
     })
 
     it('rejects if the underlying promise is rejected', () => {
-      const asyncResult = new ResultAsync(Promise.reject('oops'))
+      const asyncResult = ResultAsync.fromPromise(Promise.reject('oops'))
       expect(asyncResult).rejects.toBe('oops')
     })
   })

@@ -1,4 +1,4 @@
-import { Result } from '../result'
+import type { Result } from 'core/result'
 
 export interface ErrorConfig {
   withStackTrace: boolean
@@ -20,6 +20,14 @@ interface NeverThrowError<T, E> {
       }
   message: string
   stack: string | undefined
+}
+
+//Unknown error class
+export class UnknownError extends Error {
+  constructor(...args: ConstructorParameters<typeof Error>) {
+    super(...args)
+    this.name = 'UnknownError'
+  }
 }
 
 // Custom error object

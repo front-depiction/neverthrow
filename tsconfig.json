@@ -18,7 +18,10 @@
       ],
       "outDir": "dist",
       "skipLibCheck": true,
-      "esModuleInterop": true
+      "esModuleInterop": true,
+      "verbatimModuleSyntax": true,
+      "isolatedModules": true,
+      "noUncheckedIndexedAccess": true
   },
   "include": [
     "src/**/*.ts"

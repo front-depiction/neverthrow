@@ -1,7 +1,9 @@
-import { errAsync, ResultAsync } from './result-async'
-import { createNeverThrowError, ErrorConfig } from './_internals/error'
-import { ErrOf, ErrTuple, OkOf, OkTuple } from './_internals/types'
-import { combineResultList } from '_internals/utils'
+import { errAsync } from 'constructors/creators'
+import type { ErrOf, ErrTuple, OkOf, OkTuple } from '../_internals/types'
+import { combineResultList } from '../_internals/utils'
+import { ResultAsync } from './result-async'
+import { createNeverThrowError } from '_internals/error'
+import type { ErrorConfig } from '_internals/error'
 
 // Discriminated union for Result data (internal only)
 export type ResultData<T, E> =
@@ -276,6 +278,29 @@ class BaseResult<T, E> {
     } catch (error) {
       return new Err<V, E>(error as E)
     }
+  }
+}
+
+/**
+ * Creates a Result from a serialized object
+ */
+export function fromJSON<T, E>(serialized: SerializedResult<T, E>): Result<T, E> {
+  if (serialized.type === 'Ok') {
+    return new Ok<T, E>(serialized.value)
+  } else {
+    return new Err<T, E>(serialized.error)
+  }
+}
+
+/**
+ * Deserializes a Result from a JSON string
+ */
+export function deserialize<T, E>(json: string): Result<T, E> {
+  try {
+    const parsed = JSON.parse(json) as SerializedResult<T, E>
+    return fromJSON(parsed)
+  } catch (error) {
+    return new Err<T, E>(error as E)
   }
 }
 
